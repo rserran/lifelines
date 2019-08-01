@@ -22,7 +22,7 @@ The dataset for regression
 The dataset required for survival regression must be in the format of a Pandas DataFrame. Each row of the DataFrame should be an observation. There should be a column denoting the durations of the observations. There may be a column denoting the event status of each observation (1 if event occurred, 0 if censored). There are also the additional covariates you wish to regress against. Optionally, there could be columns in the DataFrame that are used for stratification, weights, and clusters which will be discussed later in this tutorial.
 
 
-An example dataset we will use is the Rossi recidivism dataset, available in *lifelines* as ``datasets.load_rossi``.
+An example dataset we will use is the Rossi recidivism dataset, available in *lifelines* as :meth:`~lifelines.datasets.load_rossi`.
 
 .. code:: python
 
@@ -47,8 +47,7 @@ If you need to first clean or transform your dataset (encode categorical variabl
 Cox's proportional hazard model
 =================================
 
-*lifelines* has an implementation of the Cox proportional hazards regression model (implemented in
-R as ``coxph``). The idea behind the model is that the log-hazard of an individual is a linear function of their static covariates *and* a population-level baseline hazard that changes over time. Mathematically:
+The idea behind Cox's proportional hazard model model is that the log-hazard of an individual is a linear function of their static covariates *and* a population-level baseline hazard that changes over time. Mathematically:
 
 .. math::  \underbrace{h(t | x)}_{\text{hazard}} = \overbrace{b_0(t)}^{\text{baseline hazard}} \underbrace{\exp \overbrace{\left(\sum_{i=1}^n b_i (x_i - \overline{x_i})\right)}^{\text{log-partial hazard}}}_ {\text{partial hazard}}
 
@@ -60,7 +59,7 @@ Note a few facts about this model: the only time component is in the baseline ha
 Running the regression
 -----------------------
 
-The implementation of the Cox model in *lifelines* is called ``CoxPHFitter``. Like R, it has a ``print_summary`` function that prints a tabular view of coefficients and related stats.
+The implementation of the Cox model in *lifelines* is under :class:`~lifelines.fitters.coxph_fitter.CoxPHFitter`. Like R, it has a :meth:`~lifelines.fitters.coxph_fitter.CoxPHFitter.print_summary` function that prints a tabular view of coefficients and related stats.
 
 
 .. code:: python
@@ -98,7 +97,7 @@ The implementation of the Cox model in *lifelines* is called ``CoxPHFitter``. Li
     Likelihood ratio test = 33.27 on 7 df, -log2(p)=15.37
     """
 
-To access the coefficients and the baseline hazard directly, you can use ``cph.params_`` and ``cph.baseline_hazard_`` respectively. Taking a look at these coefficients for a moment, ``prio`` (the number of prior arrests) has a coefficient of about 0.09. Thus, a one unit increase in ``prio`` means the the baseline hazard will increase by a factor of :math:`\exp{(0.09)} = 1.10` - about a 10% increase. Recall, in the Cox proportional hazard model, a higher hazard means more at risk of the event occurring. The value :math:`\exp{(0.09)}` is called the *hazard ratio*, a name that will be clear with another example.
+To access the coefficients and the baseline hazard directly, you can use :attr:`~lifelines.fitters.coxph_fitter.CoxPHFitter.params_` and :attr:`~lifelines.fitters.coxph_fitter.CoxPHFitter.baseline_hazard_` respectively. Taking a look at these coefficients for a moment, ``prio`` (the number of prior arrests) has a coefficient of about 0.09. Thus, a one unit increase in ``prio`` means the the baseline hazard will increase by a factor of :math:`\exp{(0.09)} = 1.10` - about a 10% increase. Recall, in the Cox proportional hazard model, a higher hazard means more at risk of the event occurring. The value :math:`\exp{(0.09)}` is called the *hazard ratio*, a name that will be clear with another example.
 
 Consider the coefficient of ``mar`` (whether the subject is married or not). The values in the column are binary: 0 or 1, representing either not married or married. The value of the coefficient associated with ``mar``, :math:`\exp{(-.43)}`, is the value of ratio of *hazards* associated with being married, that is:
 
@@ -113,9 +112,9 @@ Note that left-hand side is a constant (specifically, it's independent of time, 
 Convergence
 -----------------------
 
-Fitting the Cox model to the data involves using iterative methods. *lifelines* takes extra effort to help with convergence, so please be attentive to any warnings that appear. Fixing any warnings will generally help convergence and decrease the number of iterative steps required. If you wish to see the fitting, there is a ``show_progress`` parameter in ``CoxPHFitter.fit`` function. For further help, see :ref:`Problems with convergence in the Cox Proportional Hazard Model`.
+Fitting the Cox model to the data involves using iterative methods. *lifelines* takes extra effort to help with convergence, so please be attentive to any warnings that appear. Fixing any warnings will generally help convergence and decrease the number of iterative steps required. If you wish to see the fitting, there is a ``show_progress`` parameter in :meth:`~lifelines.fitters.coxph_fitter.CoxPHFitter.fit` function. For further help, see :ref:`Problems with convergence in the Cox Proportional Hazard Model`.
 
-After fitting, the value of the maximum log-likelihood this available using ``cph._log_likelihood``. The variance matrix of the coefficients is available under ``cph.variance_matrix_``.
+After fitting, the value of the maximum log-likelihood this available using :attr:`~lifelines.fitters.coxph_fitter.CoxPHFitter._log_likelihood`. The variance matrix of the coefficients is available under :attr:`~lifelines.fitters.coxph_fitter.CoxPHFitter.variance_matrix_`.
 
 
 Goodness of fit
@@ -123,16 +122,16 @@ Goodness of fit
 
 After fitting, you may want to know how "good" of a fit your model was to the data. A few methods the author has found useful is to
 
- - look at the concordance-index (see below section on :ref:`Model Selection in Survival Regression`), available as ``cph.score_`` or in the ``print_summary`` as a measure of predictive accuracy.
- - look at the log-likelihood test result in the ``print_summary``
- - check the proportional hazards assumption with the ``check_assumptions`` method. See section later on this page for more details.
+ - look at the concordance-index (see below section on :ref:`Model Selection in Survival Regression`), available as :attr:`~lifelines.fitters.coxph_fitter.CoxPHFitter.score_` or in the :meth:`~lifelines.fitters.coxph_fitter.CoxPHFitter.print_summary` as a measure of predictive accuracy.
+ - look at the log-likelihood test result in the :meth:`~lifelines.fitters.coxph_fitter.CoxPHFitter.print_summary`
+ - check the proportional hazards assumption with the :meth:`~lifelines.fitters.coxph_fitter.CoxPHFitter.check_assumptions` method. See section later on this page for more details.
 
 
 Prediction
 -----------------------
 
 
-After fitting, you can use use the suite of prediction methods: ``.predict_partial_hazard``, ``.predict_survival_function``, etc.
+After fitting, you can use use the suite of prediction methods: :meth:`~lifelines.fitters.coxph_fitter.CoxPHFitter.predict_partial_hazard`, :meth:`~lifelines.fitters.coxph_fitter.CoxPHFitter.predict_survival_function`, etc.
 
 .. code:: python
 
@@ -225,13 +224,12 @@ With a fitted model, an alternative way to view the coefficients and their range
 
 .. image:: images/coxph_plot.png
 
-.. _plot-covariate-groups:
 
 Plotting the effect of varying a covariate
 -------------------------------------------
 
 After fitting, we can plot what the survival curves look like as we vary a single covariate while
-holding everything else equal. This is useful to understand the impact of a covariate, *given the model*. To do this, we use the ``plot_covariate_groups`` method and give it the covariate of interest, and the values to display.
+holding everything else equal. This is useful to understand the impact of a covariate, *given the model*. To do this, we use the :meth:`~lifelines.fitters.coxph_fitter.CoxPHFitter.plot_covariate_groups` method and give it the covariate of interest, and the values to display.
 
 .. code:: python
 
@@ -247,7 +245,7 @@ holding everything else equal. This is useful to understand the impact of a cova
 .. image:: images/coxph_plot_covarite_groups.png
 
 
-The ``plot_covariate_groups`` method can accept multiple covariates as well. This is useful for two purposes:
+The :meth:`~lifelines.fitters.coxph_fitter.CoxPHFitter.plot_covariate_groups` method can accept multiple covariates as well. This is useful for two purposes:
 
 1. There are derivative features in your dataset. For example, suppose you have included ``year`` and ``year**2`` in your dataset. It doesn't make sense to just vary ``year`` and leave ``year**2`` fixed. You'll need to specify manually the values the covariates take on in a N-d array or list (where N is the number of covariates being varied.)
 
@@ -280,7 +278,7 @@ The reason why we use ``np.eye`` is because we want each row of the matrix to "t
 Checking the proportional hazards assumption
 -----------------------------------------------
 
-``CoxPHFitter`` has a ``check_assumptions`` method that will output violations of the proportional hazard assumption. For a tutorial on how to fix violations, see `Testing the Proportional Hazard Assumptions`_.
+:class:`~lifelines.fitters.coxph_fitter.CoxPHFitter` has a :meth:`~lifelines.fitters.coxph_fitter.CoxPHFitter.check_assumptions` method that will output violations of the proportional hazard assumption. For a tutorial on how to fix violations, see `Testing the Proportional Hazard Assumptions`_.
 
 
 Non-proportional hazards is a case of *model misspecification*. Suggestions are to look for ways to *stratify* a column (see docs below), or use a `time varying model`_.
@@ -289,9 +287,9 @@ Non-proportional hazards is a case of *model misspecification*. Suggestions are 
 Stratification
 -----------------------------------------------
 
-Sometimes one or more covariates may not obey the proportional hazard assumption. In this case, we can allow the covariate(s) to still be including in the model without estimating its effect. This is called stratification. At a high level, think of it as splitting the dataset into *N* smaller datasets, defined by the unique values of the stratifying covariate(s). Each dataset has its own baseline hazard (the non-parametric part of the model), but they all share the regression parameters (the parametric part of the model). Since covariates are the same within each dataset, there is no regression parameter for the covariates stratified on, hence they will not show up in the output. However there will be *N* baseline hazards under ``baseline_cumulative_hazard_``.
+Sometimes one or more covariates may not obey the proportional hazard assumption. In this case, we can allow the covariate(s) to still be including in the model without estimating its effect. This is called stratification. At a high level, think of it as splitting the dataset into *N* smaller datasets, defined by the unique values of the stratifying covariate(s). Each dataset has its own baseline hazard (the non-parametric part of the model), but they all share the regression parameters (the parametric part of the model). Since covariates are the same within each dataset, there is no regression parameter for the covariates stratified on, hence they will not show up in the output. However there will be *N* baseline hazards under :attr:`~lifelines.fitters.coxph_fitter.CoxPHFitter.baseline_cumulative_hazard_`.
 
-To specify variables to be used in stratification, we define them in the call to ``fit``:
+To specify variables to be used in stratification, we define them in the call to :meth:`~lifelines.fitters.coxph_fitter.CoxPHFitter.fit`:
 
 .. code:: python
 
@@ -333,9 +331,9 @@ To specify variables to be used in stratification, we define them in the call to
 Weights & robust errors
 -----------------------------------------------
 
-Observations can come with weights, as well. These weights may be integer values representing some commonly occurring observation, or they may be float values representing some sampling weights (ex: inverse probability weights). In the ``CoxPHFitter.fit`` method, an kwarg is present for specifying which column in the DataFrame should be used as weights, ex: ``CoxPHFitter(df, 'T', 'E', weights_col='weights')``.
+Observations can come with weights, as well. These weights may be integer values representing some commonly occurring observation, or they may be float values representing some sampling weights (ex: inverse probability weights). In the :meth:`~lifelines.fitters.coxph_fitter.CoxPHFitter.fit` method, an kwarg is present for specifying which column in the DataFrame should be used as weights, ex: ``CoxPHFitter(df, 'T', 'E', weights_col='weights')``.
 
-When using sampling weights, it's correct to also change the standard error calculations. That is done by turning on the ``robust`` flag in ``fit``. Internally, ``CoxPHFitter`` will use the sandwich estimator to compute the errors.
+When using sampling weights, it's correct to also change the standard error calculations. That is done by turning on the ``robust`` flag in :meth:`~lifelines.fitters.coxph_fitter.CoxPHFitter.fit`. Internally, :class:`~lifelines.fitters.coxph_fitter.CoxPHFitter` will use the sandwich estimator to compute the errors.
 
 
 .. code:: python
@@ -411,7 +409,7 @@ More generally, we can model the :math:`\lambda` as a function of covariates ava
 This model can accelerate or decelerate failure times depending on subjects' covariates. Another nice feature of this is the ease of interpretation of the coefficients: a unit increase in :math:`x_i` means the average/median survival time changes by a factor of :math:`\exp(b_i)`.
 
 
-.. note:: An important note on interpretation: Suppose :math:`b_i` was positive, then the factor :math:`\exp(b_i)` is greater than 1, which will decelerate the event time since we divide time by the factor <=> increase mean/median survival. Hence, it will be a *protective effect*. Likewise, a negative :math:`b_i` will hasten the event time <=> reduce the mean/median survival time. This interpretation is *opposite* of how the sign influences event times in the Cox model! This is standard survival analysis convention.
+.. note:: An important note on interpretation: Suppose :math:`b_i` was positive, then the factor :math:`\exp(b_i)` is greater than 1, which will decelerate the event time since we divide time by the factor ⇿ increase mean/median survival. Hence, it will be a *protective effect*. Likewise, a negative :math:`b_i` will hasten the event time ⇿ reduce the mean/median survival time. This interpretation is *opposite* of how the sign influences event times in the Cox model! This is standard survival analysis convention.
 
 
 Next, we pick a parametric form for the survival function, :math:`S(t)`. The most common is the Weibull form. So if we assume the relationship above and a Weibull form, our hazard function is quite easy to write down:
@@ -425,7 +423,8 @@ We call these accelerated failure time models, shortened often to just AFT model
 The Weibull AFT model
 -----------------------------------------------
 
-The API for the Weibull AFT model is similar to the other regression models in *lifelines*. After fitting, the coefficients can be accessed using ``.params_`` or ``.summary``, or alternatively printed using ``.print_summary()``.
+
+The Weibull AFT model is implemented under :class:`~lifelines.fitters.weibull_aft_fitter.WeibullAFTFitter`. The API for the class is similar to the other regression models in *lifelines*. After fitting, the coefficients can be accessed using :attr:`~lifelines.fitters.weibull_aft_fitter.WeibullAFTFitter.params_` or :attr:`~lifelines.fitters.weibull_aft_fitter.WeibullAFTFitter.summary`, or alternatively printed using :meth:`~lifelines.fitters.weibull_aft_fitter.WeibullAFTFitter.print_summary`.
 
 .. code:: python
 
@@ -482,7 +481,7 @@ What does the ``rho_    _intercept`` row mean in the above table? Internally, we
 Modeling ancillary parameters
 -----------------------------------------------
 
-In the above model, we left the parameter :math:`\rho` as a single unknown. We can also choose to model this parameter as well. Why might we want to do this? It can help in survival prediction to allow heterogeneity in the :math:`\rho` parameter. The model is no longer an AFT model, but we can still recover and understand the influence of changing a covariate by looking at its outcome plot (see section below). To model :math:`\rho`, we use the ``ancillary_df`` keyword argument in the call to ``fit``. There are four valid options:
+In the above model, we left the parameter :math:`\rho` as a single unknown. We can also choose to model this parameter as well. Why might we want to do this? It can help in survival prediction to allow heterogeneity in the :math:`\rho` parameter. The model is no longer an AFT model, but we can still recover and understand the influence of changing a covariate by looking at its outcome plot (see section below). To model :math:`\rho`, we use the ``ancillary_df`` keyword argument in the call to :meth:`~lifelines.fitters.weibull_aft_fitter.WeibullAFTFitter.fit`. There are four valid options:
 
 1. ``False`` or ``None``: explicitly do not model the ``rho_`` parameter (except for its intercept).
 2. a Pandas DataFrame. This option will use the columns in the Pandas DataFrame as the covariates in the regression for ``rho_``. This DataFrame could be a equal to, or a subset of, the original dataset using for modeling ``lambda_``, or it could be a totally different dataset.
@@ -541,7 +540,7 @@ In the above model, we left the parameter :math:`\rho` as a single unknown. We c
 Plotting
 -----------------------------------------------
 
-The plotting API is the same as in ``CoxPHFitter``. We can view all covariates in a forest plot:
+The plotting API is the same as in :class:`~lifelines.fitters.coxph_fitter.CoxPHFitter`. We can view all covariates in a forest plot:
 
 .. code:: python
 
@@ -551,7 +550,7 @@ The plotting API is the same as in ``CoxPHFitter``. We can view all covariates i
 .. image:: images/weibull_aft_forest.png
 
 
-We can observe the influence a variable in the model by plotting the *outcome* (i.e. survival) of changing the variable. This is done using ``plot_covariate_groups``, and this is also a nice time to observe the effects of modeling ``rho_`` vs keeping it fixed. Below we fit the Weibull model to the same dataset twice, but in the first model we model ``rho_`` and in the second model we don't. We when vary the ``prio`` (which is the number of prior arrests) and observe how the survival changes.
+We can observe the influence a variable in the model by plotting the *outcome* (i.e. survival) of changing the variable. This is done using :meth:`~lifelines.fitters.weibull_aft_fitter.WeibullAFTFitter.plot_covariate_groups`, and this is also a nice time to observe the effects of modeling ``rho_`` vs keeping it fixed. Below we fit the Weibull model to the same dataset twice, but in the first model we model ``rho_`` and in the second model we don't. We when vary the ``prio`` (which is the number of prior arrests) and observe how the survival changes.
 
 .. code:: python
 
@@ -580,13 +579,13 @@ Comparing a few of these survival functions side by side:
 
 .. image:: images/weibull_aft_two_models_side_by_side.png
 
-You read more about and see other examples of the extensions to ``plot_covariate_groups`` :ref:`plot-covariate-groups`.
+You read more about and see other examples of the extensions to :meth:`~lifelines.fitters.weibull_aft_fitter.WeibullAFTFitter.plot_covariate_groups`
 
 
 Prediction
 -----------------------------------------------
 
-Given a new subject, we ask questions about their future survival? When are they likely to experience the event? What does their survival function look like? The ``WeibullAFTFitter`` is able to answer these. If we have modeled the ancillary covariates, we are required to include those as well:
+Given a new subject, we ask questions about their future survival? When are they likely to experience the event? What does their survival function look like? The :class:`~lifelines.fitters.weibull_aft_fitter.WeibullAFTFitter` is able to answer these. If we have modeled the ancillary covariates, we are required to include those as well:
 
 .. code:: python
 
@@ -599,7 +598,7 @@ Given a new subject, we ask questions about their future survival? When are they
     aft.predict_expectation(X, ancillary_X=X)
 
 
-There are two tunable parameters that can be used to to achieve a better test score. These are ``penalizer`` and ``l1_ratio`` in the call to ``WeibullAFTFitter``. The penalizer is similar to scikit-learn's ``ElasticNet`` model, see their `docs <https://scikit-learn.org/stable/modules/generated/sklearn.linear_model.ElasticNet.html>`_.
+There are two tunable parameters that can be used to to achieve a better test score. These are ``penalizer`` and ``l1_ratio`` in the call to :class:`~lifelines.fitters.weibull_aft_fitter.WeibullAFTFitter`. The penalizer is similar to scikit-learn's ``ElasticNet`` model, see their `docs <https://scikit-learn.org/stable/modules/generated/sklearn.linear_model.ElasticNet.html>`_.
 
 .. code:: python
 
@@ -641,7 +640,7 @@ There are two tunable parameters that can be used to to achieve a better test sc
 The Log-Normal and Log-Logistic AFT model
 -----------------------------------------------
 
-There are also the ``LogNormalAFTFitter`` and ``LogLogisticAFTFitter`` models, which instead of assuming that the survival time distribution is Weibull, we assume it is Log-Normal or Log-Logistic, respectively. They have identical APIs to the ``WeibullAFTFitter``, but the parameter names are different.
+There are also the :class:`~lifelines.fitters.log_normal_aft_fitter.LogNormalAFTFitter` and :class:`~lifelines.fitters.log_logistic_aft_fitter.LogLogisticAFTFitter` models, which instead of assuming that the survival time distribution is Weibull, we assume it is Log-Normal or Log-Logistic, respectively. They have identical APIs to the :class:`~lifelines.fitters.weibull_aft_fitter.WeibullAFTFitter`, but the parameter names are different.
 
 
 .. code:: python
@@ -757,7 +756,7 @@ exercise, we will use the regime dataset and include the categorical
 variables ``un_continent_name`` (eg: Asia, North America,...), the
 ``regime`` type (e.g., monarchy, civilian,...) and the year the regime
 started in, ``start_year``. The estimator to fit unknown coefficients in Aalen's additive model is
-located under ``lifelines.AalenAdditiveFitter``.
+located under :class:`~lifelines.fitters.aalen_additive_fitter.AalenAdditiveFitter`.
 
 .. code:: python
 
@@ -820,8 +819,8 @@ unstable (due to high co-linearity or small sample sizes) -- adding a penalizer 
 
     aaf = AalenAdditiveFitter(coef_penalizer=1.0, fit_intercept=False)
 
-An instance of ``AalenAdditiveFitter``
-includes a ``fit`` method that performs the inference on the coefficients. This method accepts a pandas DataFrame: each row is an individual and columns are the covariates and
+An instance of :class:`~lifelines.fitters.aalen_additive_fitter.AalenAdditiveFitter`
+includes a :meth:`~lifelines.fitters.aalen_additive_fitter.AalenAdditiveFitter.fit` method that performs the inference on the coefficients. This method accepts a pandas DataFrame: each row is an individual and columns are the covariates and
 two individual columns: a *duration* column and a boolean *event occurred* column (where event occurred refers to the event of interest - expulsion from government in this case)
 
 
@@ -836,7 +835,7 @@ two individual columns: a *duration* column and a boolean *event occurred* colum
     aaf.fit(X, 'T', event_col='E')
 
 
-After fitting, the instance exposes a ``cumulative_hazards_`` DataFrame
+After fitting, the instance exposes a :attr:`~lifelines.fitters.aalen_additive_fitter.AalenAdditiveFitter.cumulative_hazards_` DataFrame
 containing the estimates of :math:`\int_0^t b_i(s) \; ds`:
 
 .. code:: python
@@ -862,7 +861,7 @@ containing the estimates of :math:`\int_0^t b_i(s) \; ds`:
 
 
 
-``AalenAdditiveFitter`` also has built in plotting:
+:class:`~lifelines.fitters.aalen_additive_fitter.AalenAdditiveFitter` also has built in plotting:
 
 .. code:: python
 
@@ -944,7 +943,7 @@ of AUC, another common loss function, and is interpreted similarly:
 * 1.0 is perfect concordance and,
 * 0.0 is perfect anti-concordance (multiply predictions with -1 to get 1.0)
 
-Fitted survival models typically have a concordance index between 0.55 and 0.75 (this may seem bad, but even a perfect model has a lot of noise than can make a high score impossible). In *lifelines*, a fitted model's concordance-index is present in the output of ``print_summary()``, but also available under the ``score_`` property. Generally, the measure is implemented in *lifelines* under ``lifelines.utils.concordance_index`` and accepts the actual times (along with any censored subjects) and the predicted times.
+Fitted survival models typically have a concordance index between 0.55 and 0.75 (this may seem bad, but even a perfect model has a lot of noise than can make a high score impossible). In *lifelines*, a fitted model's concordance-index is present in the output of ``print_summary()``, but also available under the ``score_`` property. Generally, the measure is implemented in *lifelines* under :func:`lifelines.utils.concordance_index` and accepts the actual times (along with any censored subjects) and the predicted times.
 
 .. code:: python
 
@@ -972,7 +971,7 @@ Fitted survival models typically have a concordance index between 0.55 and 0.75 
 
 However, there are other, arguably better, methods to measure the fit of a model. Included in ``print_summary`` is the log-likelihood, which can be used in an `AIC calculation <https://en.wikipedia.org/wiki/Akaike_information_criterion>`_, and the `log-likelihood ratio statistic <https://en.wikipedia.org/wiki/Likelihood-ratio_test>`_. Generally, I personally loved this article by Frank Harrell, `"Statistically Efficient Ways to Quantify Added Predictive Value of New Measurements" <http://www.fharrell.com/post/addvalue/>`_.
 
-*lifelines* has an implementation of k-fold cross validation under ``lifelines.utils.k_fold_cross_validation``. This function accepts an instance of a regression fitter (either ``CoxPHFitter`` of ``AalenAdditiveFitter``), a dataset, plus ``k`` (the number of folds to perform, default 5). On each fold, it splits the data
+*lifelines* has an implementation of k-fold cross validation under :func:`lifelines.utils.k_fold_cross_validation`. This function accepts an instance of a regression fitter (either :class:`~lifelines.fitters.coxph_fitter.CoxPHFitter` of :class:`~lifelines.fitters.aalen_additive_fitter.AalenAdditiveFitter`), a dataset, plus ``k`` (the number of folds to perform, default 5). On each fold, it splits the data
 into a training set and a testing set fits itself on the training set and evaluates itself on the testing set (using the concordance measure by default).
 
 .. code:: python
