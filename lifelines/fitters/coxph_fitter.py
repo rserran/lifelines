@@ -10,7 +10,6 @@ from numpy.linalg import norm, inv
 from scipy.linalg import solve as spsolve, LinAlgError
 from scipy.integrate import trapz
 from scipy import stats
-from bottleneck import nansum as array_sum_to_scalar
 from numpy import sum as array_sum_to_scalar
 
 from lifelines.fitters import BaseFitter
@@ -554,7 +553,7 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
 
         self._hessian_ = hessian
         self._score_ = gradient
-        self._log_likelihood = ll
+        self.log_likelihood_ = ll
 
         if show_progress and completed:
             print("Convergence completed after %d iterations." % (i))
@@ -574,6 +573,14 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
             )
 
         return beta
+
+    @property
+    def _log_likelihood(self):
+        warnings.warn(
+            "Please use `log_likelihood` property instead. `_log_likelihood` will be removed in a future version of lifelines",
+            DeprecationWarning,
+        )
+        return self.log_likelihood_
 
     def _get_efron_values_single(self, X, T, E, weights, beta):
         """
@@ -1282,7 +1289,7 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
 
         print("{} = {}".format(justify("number of subjects"), self._n_examples))
         print("{} = {}".format(justify("number of events"), self.event_observed.sum()))
-        print("{} = {:.{prec}f}".format(justify("partial log-likelihood"), self._log_likelihood, prec=decimals))
+        print("{} = {:.{prec}f}".format(justify("partial log-likelihood"), self.log_likelihood_, prec=decimals))
         print("{} = {}".format(justify("time fit was run"), self._time_fit_was_called))
 
         for k, v in kwargs.items():
@@ -1349,7 +1356,7 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
                 ll_null = self._trivial_log_likelihood_single(
                     self.durations.values, self.event_observed.values, self.weights.values
                 )
-        ll_alt = self._log_likelihood
+        ll_alt = self.log_likelihood_
         test_stat = 2 * ll_alt - 2 * ll_null
         degrees_freedom = self.params_.shape[0]
         p_value = chisq_test(test_stat, degrees_freedom=degrees_freedom)
@@ -1432,7 +1439,7 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
         X = normalize(X, self._norm_mean.values, 1)
         return pd.DataFrame(np.dot(X, self.params_), index=index)
 
-    def predict_cumulative_hazard(self, X, times=None):
+    def predict_cumulative_hazard(self, X, times=None, conditional_after=None):
         """
         Parameters
         ----------
@@ -1445,12 +1452,19 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
             an iterable of increasing times to predict the cumulative hazard at. Default
             is the set of all durations (observed and unobserved). Uses a linear interpolation if
             points in time are not in the index.
+        conditional_after: iterable, optional
+            Must be equal is size to X.shape[0] (denoted `n` above).  An iterable (array, list, series) of possibly non-zero values that represent how long the
+            subject has already lived for. Ex: if :math:`T` is the unknown event time, then this represents
+            :math`T | T > s`. This is useful for knowing the *remaining* hazard/survival of censored subjects.
+            The new timeline is the remaining duration of the subject, i.e. normalized back to starting at 0.
 
         Returns
         -------
         cumulative_hazard_ : DataFrame
             the cumulative hazard of individuals over the timeline
         """
+        if conditional_after is not None:
+            raise NotImplementedError("Sorry, conditional_after for Cox is tricky to do. It's not implemented yet.")
 
         if self.strata:
             cumulative_hazard_ = pd.DataFrame()
@@ -1473,10 +1487,10 @@ the following on the original dataset, df: `df.groupby(%s).size()`. Expected is 
                     left_index=True,
                 )
         else:
-
             c_0 = self.baseline_cumulative_hazard_
             v = self.predict_partial_hazard(X)
             col = _get_index(v)
+
             cumulative_hazard_ = pd.DataFrame(np.dot(c_0, v.T), columns=col, index=c_0.index)
 
         if times is not None:
@@ -1484,7 +1498,7 @@ the following on the original dataset, df: `df.groupby(%s).size()`. Expected is 
             return dataframe_interpolate_at_times(cumulative_hazard_, times)
         return cumulative_hazard_
 
-    def predict_survival_function(self, X, times=None):
+    def predict_survival_function(self, X, times=None, conditional_after=None):
         """
         Predict the survival function for individuals, given their covariates. This assumes that the individual
         just entered the study (that is, we do not condition on how long they have already lived for.)
@@ -1500,6 +1514,11 @@ the following on the original dataset, df: `df.groupby(%s).size()`. Expected is 
             an iterable of increasing times to predict the cumulative hazard at. Default
             is the set of all durations (observed and unobserved). Uses a linear interpolation if
             points in time are not in the index.
+        conditional_after: iterable, optional
+            Must be equal is size to X.shape[0] (denoted `n` above).  An iterable (array, list, series) of possibly non-zero values that represent how long the
+            subject has already lived for. Ex: if :math:`T` is the unknown event time, then this represents
+            :math`T | T > s`. This is useful for knowing the *remaining* hazard/survival of censored subjects.
+            The new timeline is the remaining duration of the subject, i.e. normalized back to starting at 0.
 
 
         Returns
@@ -1507,9 +1526,9 @@ the following on the original dataset, df: `df.groupby(%s).size()`. Expected is 
         survival_function : DataFrame
             the survival probabilities of individuals over the timeline
         """
-        return np.exp(-self.predict_cumulative_hazard(X, times=times))
+        return np.exp(-self.predict_cumulative_hazard(X, times=times, conditional_after=conditional_after))
 
-    def predict_percentile(self, X, p=0.5):
+    def predict_percentile(self, X, p=0.5, conditional_after=None):
         """
         Returns the median lifetimes for the individuals, by default. If the survival curve of an
         individual does not cross 0.5, then the result is infinity.
@@ -1523,6 +1542,11 @@ the following on the original dataset, df: `df.groupby(%s).size()`. Expected is 
             same order as the training data.
         p: float, optional (default=0.5)
             the percentile, must be between 0 and 1.
+        conditional_after: iterable, optional
+            Must be equal is size to X.shape[0] (denoted `n` above).  An iterable (array, list, series) of possibly non-zero values that represent how long the
+            subject has already lived for. Ex: if :math:`T` is the unknown event time, then this represents
+            :math`T | T > s`. This is useful for knowing the *remaining* hazard/survival of censored subjects.
+            The new timeline is the remaining duration of the subject, i.e. normalized back to starting at 0.
 
         Returns
         -------
@@ -1534,7 +1558,7 @@ the following on the original dataset, df: `df.groupby(%s).size()`. Expected is 
 
         """
         subjects = _get_index(X)
-        return qth_survival_times(p, self.predict_survival_function(X)[subjects]).T
+        return qth_survival_times(p, self.predict_survival_function(X, conditional_after=conditional_after)[subjects]).T
 
     def predict_median(self, X):
         """

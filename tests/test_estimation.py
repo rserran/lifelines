@@ -34,6 +34,7 @@ from lifelines.utils import (
     ConvergenceError,
     median_survival_times,
     StatisticalWarning,
+    qth_survival_time,
 )
 
 from lifelines.fitters import BaseFitter, ParametericUnivariateFitter, ParametricRegressionFitter
@@ -56,6 +57,7 @@ from lifelines import (
     LogLogisticAFTFitter,
     PiecewiseExponentialRegressionFitter,
     GeneralizedGammaFitter,
+    GeneralizedGammaRegressionFitter,
 )
 
 from lifelines.datasets import (
@@ -951,6 +953,39 @@ class TestGeneralizedGammaFitter:
         gg.print_summary(4)
         assert abs(gg.summary.loc["lambda_", "coef"] - -np.exp(gg.summary.loc["ln_sigma_", "coef"])) < 0.15
 
+    def test_against_reliability_software(self):
+        # From http://reliawiki.org/index.php/The_Generalized_Gamma_Distribution
+        T = [
+            17.88,
+            28.92,
+            33,
+            41.52,
+            42.12,
+            45.6,
+            48.4,
+            51.84,
+            51.96,
+            54.12,
+            55.56,
+            67.8,
+            68.64,
+            68.64,
+            68.88,
+            84.12,
+            93.12,
+            98.64,
+            105.12,
+            105.84,
+            127.92,
+            128.04,
+            173.4,
+        ]
+
+        gg = GeneralizedGammaFitter().fit(T)
+        npt.assert_allclose(gg.summary.loc["mu_", "coef"], 4.23064, rtol=0.001)
+        npt.assert_allclose(gg.summary.loc["lambda_", "coef"], 0.307639, rtol=1e-5)
+        npt.assert_allclose(np.exp(gg.summary.loc["ln_sigma_", "coef"]), 0.509982, rtol=1e-6)
+
 
 class TestExponentialFitter:
     def test_fit_computes_correct_lambda_(self):
@@ -1359,23 +1394,29 @@ class TestBreslowFlemingHarringtonFitter:
 
 class TestRegressionFitters:
     @pytest.fixture
+    def rossi(self):
+        rossi = load_rossi()
+        return rossi
+
+    @pytest.fixture
     def regression_models(self):
         return [
-            CoxPHFitter(),
-            CoxPHFitter(penalizer=1.0),
-            AalenAdditiveFitter(coef_penalizer=1.0, smoothing_penalizer=1.0),
+            CoxPHFitter(penalizer=10.0),
             CoxPHFitter(strata=["race", "paro", "mar", "wexp"]),
-            WeibullAFTFitter(),
-            LogNormalAFTFitter(),
-            LogLogisticAFTFitter(),
+            AalenAdditiveFitter(coef_penalizer=1.0, smoothing_penalizer=1.0),
+            WeibullAFTFitter(fit_intercept=True),
+            LogNormalAFTFitter(fit_intercept=True),
+            LogLogisticAFTFitter(fit_intercept=True),
             PiecewiseExponentialRegressionFitter(breakpoints=[25.0]),
             CustomRegressionModelTesting(penalizer=1.0),
+            GeneralizedGammaRegressionFitter(penalizer=0),
         ]
 
     def test_dill_serialization(self, rossi, regression_models):
         from dill import dumps, loads
 
         for fitter in regression_models:
+            print(fitter)
             fitter.fit(rossi, "week", "arrest")
 
             unpickled = loads(dumps(fitter))
@@ -1432,11 +1473,12 @@ class TestRegressionFitters:
                 fitter.fit(rossi)
 
     def test_fit_methods_can_accept_optional_event_col_param(self, regression_models, rossi):
+        rossi_without_arrest = rossi.copy().drop("arrest", axis=1)
         for model in regression_models:
             model.fit(rossi, "week", event_col="arrest")
             assert_series_equal(model.event_observed.sort_index(), rossi["arrest"].astype(bool), check_names=False)
 
-            model.fit(rossi, "week")
+            model.fit(rossi_without_arrest, "week")
             npt.assert_array_equal(model.event_observed.values, np.ones(rossi.shape[0]))
 
     def test_predict_methods_in_regression_return_same_types(self, regression_models, rossi):
@@ -1461,8 +1503,10 @@ class TestRegressionFitters:
         normalized_rossi["week"] = (normalized_rossi["week"]) / t.std()
 
         for fitter in regression_models:
-            if isinstance(fitter, PiecewiseExponentialRegressionFitter) or isinstance(
-                fitter, CustomRegressionModelTesting
+            if (
+                isinstance(fitter, PiecewiseExponentialRegressionFitter)
+                or isinstance(fitter, CustomRegressionModelTesting)
+                or isinstance(fitter, GeneralizedGammaRegressionFitter)
             ):
                 continue
 
@@ -1502,14 +1546,14 @@ class TestRegressionFitters:
     def test_error_is_raised_if_using_non_numeric_data_in_fit(self, regression_models):
         df = pd.DataFrame.from_dict(
             {
-                "t": [1.0, 2.0, 5.0],
-                "bool_": [True, True, False],
-                "int_": [1, -1, 0],
-                "uint8_": pd.Series([1, 3, 2], dtype="uint8"),
-                "string_": ["test", "a", "2.5"],
-                "float_": [1.2, -0.5, 0.0],
-                "categorya_": pd.Series([1, 2, 3], dtype="category"),
-                "categoryb_": pd.Series(["a", "b", "a"], dtype="category"),
+                "t": [1.0, 6.0, 3.0, 4.0],
+                "bool_": [True, True, False, True],
+                "int_": [1, -1, 0, 2],
+                "uint8_": pd.Series([1, 3, 2, 5], dtype="uint8"),
+                "string_": ["test", "a", "2.5", ""],
+                "float_": [1.2, -0.5, 0.0, 2.2],
+                "categorya_": pd.Series([1, 2, 3, 1], dtype="category"),
+                "categoryb_": pd.Series(["a", "b", "a", "b"], dtype="category"),
             }
         )
 
@@ -1626,7 +1670,47 @@ class TestAFTFitters:
     def models(self):
         return [WeibullAFTFitter(), LogNormalAFTFitter(), LogLogisticAFTFitter()]
 
-    def test_fit_intercept_can_be_false(self, rossi):
+    def test_percentile_gives_proper_result_compared_to_survival_function(self, rossi, models):
+        for model in models:
+            model.fit(rossi, "week", "arrest")
+            times = np.linspace(1, 2000, 5000)
+            p = 0.1
+            subject = rossi.loc[[400]]
+            assert (
+                abs(
+                    model.predict_percentile(subject, p=p)
+                    - qth_survival_time(p, model.predict_survival_function(subject, times=times))
+                ).loc[400, 0]
+                < 0.5
+            )
+            assert (
+                abs(
+                    model.predict_percentile(subject, p=p, conditional_after=[50])
+                    - qth_survival_time(
+                        p, model.predict_survival_function(subject, times=times, conditional_after=[50])
+                    )
+                ).loc[400, 0]
+                < 0.5
+            )
+
+    def test_fit_intercept_can_be_false_and_not_provided(self, rossi):
+        # nonsensical data
+        interval_rossi = rossi.copy()
+        interval_rossi["start"] = 0
+        interval_rossi["end"] = rossi["week"]
+        interval_rossi["arrest"] = False
+        interval_rossi = interval_rossi.drop("week", axis=1)
+
+        # nonsensical data
+        left_rossi = rossi.copy()
+        left_rossi["week"] = 1 / rossi["week"] + 1
+
+        for fitter in [WeibullAFTFitter(fit_intercept=False)]:
+            fitter.fit_right_censoring(rossi, "week", "arrest")
+            fitter.fit_left_censoring(left_rossi, "week", "arrest")
+            fitter.fit_interval_censoring(interval_rossi, "start", "end", "arrest")
+
+    def test_fit_intercept_can_be_false_but_provided(self, rossi):
         rossi["intercept"] = 1.0
         for fitter in [
             WeibullAFTFitter(fit_intercept=False),
@@ -1684,8 +1768,8 @@ class TestAFTFitters:
         lnf = LogNormalAFTFitter().fit(df, "T")
         llf = LogLogisticAFTFitter().fit(df, "T")
 
-        assert wf._log_likelihood > lnf._log_likelihood
-        assert wf._log_likelihood > llf._log_likelihood
+        assert wf.log_likelihood_ > lnf.log_likelihood_
+        assert wf.log_likelihood_ > llf.log_likelihood_
 
         # lognormal should have the best fit -> largest ll
         W = norm.rvs(scale=1, loc=0, size=N)
@@ -1699,8 +1783,8 @@ class TestAFTFitters:
         lnf = LogNormalAFTFitter().fit(df, "T")
         llf = LogLogisticAFTFitter().fit(df, "T")
 
-        assert lnf._log_likelihood > wf._log_likelihood
-        assert lnf._log_likelihood > llf._log_likelihood
+        assert lnf.log_likelihood_ > wf.log_likelihood_
+        assert lnf.log_likelihood_ > llf.log_likelihood_
 
         # loglogistic should have the best fit -> largest ll
         W = logistic.rvs(scale=1, loc=0, size=N)
@@ -1714,8 +1798,8 @@ class TestAFTFitters:
         lnf = LogNormalAFTFitter().fit(df, "T")
         llf = LogLogisticAFTFitter().fit(df, "T")
 
-        assert llf._log_likelihood > wf._log_likelihood
-        assert llf._log_likelihood > lnf._log_likelihood
+        assert llf.log_likelihood_ > wf.log_likelihood_
+        assert llf.log_likelihood_ > lnf.log_likelihood_
 
     def test_aft_median_behaviour(self, models, rossi):
         for aft in models:
@@ -1928,7 +2012,7 @@ class TestWeibullAFTFitter:
     def test_fitted_log_likelihood_match_with_flexsurv_has(self, aft, rossi):
         # survreg(Surv(week, arrest) ~ fin + age + race + wexp + mar + paro + prio, data=df, dist='weibull')
         aft.fit(rossi, "week", "arrest")
-        npt.assert_allclose(aft._log_likelihood, -679.9166)
+        npt.assert_allclose(aft.log_likelihood_, -679.9166)
 
     def test_fitted_log_likelihood_ratio_test_match_with_flexsurv_has(self, aft, rossi):
         # survreg(Surv(week, arrest) ~ fin + age + race + wexp + mar + paro + prio, data=df, dist='weibull')
@@ -2059,7 +2143,7 @@ class TestWeibullAFTFitter:
         npt.assert_allclose(aft.summary.loc[("lambda_", "_intercept"), "coef"], np.log(18.31971), rtol=1e-4)
         npt.assert_allclose(aft.summary.loc[("rho_", "_intercept"), "coef"], np.log(2.82628), rtol=1e-4)
 
-        npt.assert_allclose(aft._log_likelihood, -2027.196, rtol=1e-3)
+        npt.assert_allclose(aft.log_likelihood_, -2027.196, rtol=1e-3)
 
         npt.assert_allclose(aft.summary.loc[("lambda_", "gender"), "se(coef)"], 0.02823, rtol=1e-1)
         # npt.assert_allclose(aft.summary.loc[("lambda_", "_intercept"), "se(coef)"], 0.42273, rtol=1e-1)
@@ -2067,7 +2151,7 @@ class TestWeibullAFTFitter:
 
         aft.fit_interval_censoring(df, "left", "right", "E", ancillary_df=True)
 
-        npt.assert_allclose(aft._log_likelihood, -2025.813, rtol=1e-3)
+        npt.assert_allclose(aft.log_likelihood_, -2025.813, rtol=1e-3)
         # npt.assert_allclose(aft.summary.loc[("rho_", "gender"), "coef"], 0.1670, rtol=1e-4)
 
     def test_aft_weibull_with_weights(self, rossi, aft):
@@ -2433,7 +2517,7 @@ Log-likelihood ratio test = 33.27 on 7 df, -log2(p)=15.37
 
     def test_log_likelihood(self, data_nus, cph):
         cph.fit(data_nus, duration_col="t", event_col="E")
-        assert abs(cph._log_likelihood - -12.7601409152) < 0.001
+        assert abs(cph.log_likelihood_ - -12.7601409152) < 0.001
 
     def test_single_efron_computed_by_hand_examples(self, data_nus, cph):
 
@@ -3097,7 +3181,7 @@ Log-likelihood ratio test = 33.27 on 7 df, -log2(p)=15.37
             assert_series_equal(cph.summary["se(coef)"], expected_std, check_less_precise=2, check_names=False)
 
             expected_ll = -1.142397
-            assert abs(cph._log_likelihood - expected_ll) < 0.001
+            assert abs(cph.log_likelihood_ - expected_ll) < 0.001
 
     def test_less_trival_float_weights_with_no_ties_is_the_same_as_R(self, regression_dataset):
         """
@@ -3347,7 +3431,7 @@ Log-likelihood ratio test = 33.27 on 7 df, -log2(p)=15.37
         cp.fit(rossi, "week", "arrest", strata=["race", "paro", "mar", "wexp"])
 
         npt.assert_almost_equal(cp.summary["coef"].values, [-0.335, -0.059, 0.100], decimal=3)
-        assert abs(cp._log_likelihood - -436.9339) / 436.9339 < 0.01
+        assert abs(cp.log_likelihood_ - -436.9339) / 436.9339 < 0.01
 
     def test_baseline_hazard_works_with_strata_against_R_output(self, rossi):
         """
@@ -3396,7 +3480,7 @@ Log-likelihood ratio test = 33.27 on 7 df, -log2(p)=15.37
         cp_with_strata_in_fit.fit(rossi, "week", "arrest", strata=strata)
         assert cp_with_strata_in_fit.strata == strata
 
-        assert cp_with_strata_in_init._log_likelihood == cp_with_strata_in_fit._log_likelihood
+        assert cp_with_strata_in_init.log_likelihood_ == cp_with_strata_in_fit.log_likelihood_
 
     def test_baseline_survival_is_the_same_indp_of_location(self, regression_dataset):
         df = regression_dataset.copy()
@@ -3982,8 +4066,7 @@ class TestCoxTimeVaryingFitter:
         )
 
         with pytest.warns(ConvergenceWarning, match="with start and stop equal and a death event") as w:
-            with pytest.raises(ZeroDivisionError):
-                ctv.fit(df, id_col="id", start_col="start", stop_col="stop", event_col="event")
+            ctv.fit(df, id_col="id", start_col="start", stop_col="stop", event_col="event")
 
     def test_summary_output_versus_Rs_against_standford_heart_transplant(self, ctv, heart):
         """
@@ -4225,11 +4308,11 @@ Likelihood ratio test = 15.11 on 4 df, -log2(p)=7.80
         npt.assert_allclose(summary["coef"].tolist(), [0.0293, -0.6176, -0.1527], atol=0.001)
         npt.assert_allclose(summary["se(coef)"].tolist(), [0.0139, 0.3707, 0.0710], atol=0.001)
         npt.assert_allclose(summary["z"].tolist(), [2.11, -1.67, -2.15], atol=0.01)
-        npt.assert_allclose(ctv._log_likelihood, -254.7144, atol=0.01)
+        npt.assert_allclose(ctv.log_likelihood_, -254.7144, atol=0.01)
 
     def test_ctv_with_multiple_strata(self, ctv, heart):
         ctv.fit(heart, id_col="id", event_col="event", strata=["transplant", "surgery"])
-        npt.assert_allclose(ctv._log_likelihood, -230.6726, atol=0.01)
+        npt.assert_allclose(ctv.log_likelihood_, -230.6726, atol=0.01)
 
     def test_ctv_ratio_test_with_strata(self, ctv, heart):
         ctv.fit(heart, id_col="id", event_col="event", strata=["transplant"])

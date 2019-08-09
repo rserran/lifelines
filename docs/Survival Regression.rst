@@ -114,7 +114,7 @@ Convergence
 
 Fitting the Cox model to the data involves using iterative methods. *lifelines* takes extra effort to help with convergence, so please be attentive to any warnings that appear. Fixing any warnings will generally help convergence and decrease the number of iterative steps required. If you wish to see the fitting, there is a ``show_progress`` parameter in :meth:`~lifelines.fitters.coxph_fitter.CoxPHFitter.fit` function. For further help, see :ref:`Problems with convergence in the Cox Proportional Hazard Model`.
 
-After fitting, the value of the maximum log-likelihood this available using :attr:`~lifelines.fitters.coxph_fitter.CoxPHFitter._log_likelihood`. The variance matrix of the coefficients is available under :attr:`~lifelines.fitters.coxph_fitter.CoxPHFitter.variance_matrix_`.
+After fitting, the value of the maximum log-likelihood this available using :attr:`~lifelines.fitters.coxph_fitter.CoxPHFitter.log_likelihood`. The variance matrix of the coefficients is available under :attr:`~lifelines.fitters.coxph_fitter.CoxPHFitter.variance_matrix_`.
 
 
 Goodness of fit
@@ -135,7 +135,7 @@ After fitting, you can use use the suite of prediction methods: :meth:`~lifeline
 
 .. code:: python
 
-    X = rossi_dataset.drop(["week", "arrest"], axis=1)
+    X = rossi_dataset
 
     cph.predict_partial_hazard(X)
 
@@ -156,54 +156,20 @@ A common use case is to predict the event time of censored subjects. This is eas
 
 Thus we scale the original survival function by the survival function at time :math:`s` (everything prior to :math:`s` should be mapped to 1.0 as well, since we are working with probabilities and we know that the subject was alive before :math:`s`).
 
-Back to our original problem of predicting the event time of censored individuals, we do the same thing:
+Back to our original problem of predicting the event time of censored individuals, *lifelines* has all this math and logic built in when using the `conditional_after` kwarg.
 
-.. code:: python
-
-    from lifelines import CoxPHFitter
-    from lifelines.datasets import load_regression_dataset
-
-    df = load_regression_dataset()
-
-    cph = CoxPHFitter().fit(df, 'T', 'E')
-
-    censored_subjects = df.loc[df['E'] == 0]
-
-    unconditioned_sf = cph.predict_survival_function(censored_subjects)
-
-    conditioned_sf = unconditioned_sf.apply(lambda c: (c / c.loc[df.loc[c.name, 'T']]).clip_upper(1))
-
-    # let's focus on a single subject
-    subject = 13
-    unconditioned_sf[subject].plot(ls="--", color="#A60628", label="unconditioned")
-    conditioned_sf[subject].plot(color="#A60628", label="conditioned on $T>10$")
-    plt.legend()
+.. code::
 
 
-.. image:: images/survival_regression_conditioning.png
+    censored_subjects = rossi.loc[~rossi['arrest'].astype(bool)]
+    censored_subjects_last_obs = censored_subjects['week']
 
+    cph.predict_partial_hazard(censored_subjects, conditional_after=censored_subjects_last_obs)
 
-From here, you can pick a median or percentile as a best guess as to the subject's event time:
+    cph.predict_survival_function(censored_subjects, times=[5., 25., 50.], conditional_after=censored_subjects_last_obs)
 
-.. code:: python
+    cph.predict_median(censored_subjects, conditional_after=censored_subjects_last_obs)
 
-
-    from lifelines.utils import median_survival_times, qth_survival_times
-
-    predictions_50 = median_survival_times(conditioned_sf)
-    predictions_75 = qth_survival_times(0.75, conditioned_sf)
-
-
-    # plotting subject 13 again
-    plt.hlines([0.5, 0.75], 0, 23, alpha=0.5, label="percentiles")
-
-    plt.scatter(median_survival_times(conditioned_sf[subject]), 0.5,  color="#E24A33", label="median prediction", zorder=20)
-    plt.scatter(qth_survival_times(0.75, conditioned_sf[subject]), 0.75,  color="#467821", label="q=75 prediction", zorder=20)
-
-    plt.legend()
-
-
-.. image:: images/survival_regression_conditioning_with_median.png
 
 
 Plotting the coefficients
@@ -592,14 +558,26 @@ Given a new subject, we ask questions about their future survival? When are they
 
     X = rossi.loc[:10]
 
-    aft.predict_cumulative_hazard(X, ancillary_X=X)
-    aft.predict_survival_function(X, ancillary_X=X)
-    aft.predict_median(X, ancillary_X=X)
-    aft.predict_percentile(X, ancillary_X=X)
-    aft.predict_expectation(X, ancillary_X=X)
+    aft.predict_cumulative_hazard(X, ancillary_df=X)
+    aft.predict_survival_function(X, ancillary_df=X)
+    aft.predict_median(X, ancillary_df=X)
+    aft.predict_percentile(X, p=0.9, ancillary_df=X)
+    aft.predict_expectation(X, ancillary_df=X)
 
 
-There are two tunable parameters that can be used to to achieve a better test score. These are ``penalizer`` and ``l1_ratio`` in the call to :class:`~lifelines.fitters.weibull_aft_fitter.WeibullAFTFitter`. The penalizer is similar to scikit-learn's ``ElasticNet`` model, see their `docs <https://scikit-learn.org/stable/modules/generated/sklearn.linear_model.ElasticNet.html>`_.
+When predicting time remaining for uncensored individuals, you can use the `conditional_after` kwarg:
+
+
+    censored_X = rossi.loc[~rossi['arrest'].astype(bool)]
+    censored_subjects_last_obs = censored_X['week']
+
+    aft.predict_cumulative_hazard(censored_X, ancillary_df=censored_X, conditional_after=censored_subjects_last_obs)
+    aft.predict_survival_function(censored_X, ancillary_df=censored_X, conditional_after=censored_subjects_last_obs)
+    aft.predict_median(censored_X, ancillary_df=censored_X, conditional_after=censored_subjects_last_obs)
+    aft.predict_percentile(X, p=0.9, ancillary_df=censored_X, conditional_after=censored_subjects_last_obs)
+
+
+There are two hyper-parameters that can be used to to achieve a better test score. These are ``penalizer`` and ``l1_ratio`` in the call to :class:`~lifelines.fitters.weibull_aft_fitter.WeibullAFTFitter`. The penalizer is similar to scikit-learn's ``ElasticNet`` model, see their `docs <https://scikit-learn.org/stable/modules/generated/sklearn.linear_model.ElasticNet.html>`_.
 
 .. code:: python
 
@@ -669,9 +647,9 @@ Often, you don't know *a priori* which AFT model to use. Each model has some ass
     lnf = LogNormalAFTFitter().fit(rossi, 'week', 'arrest')
     wf = WeibullAFTFitter().fit(rossi, 'week', 'arrest')
 
-    print(llf._log_likelihood)  # -679.938
-    print(lnf._log_likelihood)  # -683.234
-    print(wf._log_likelihood)   # -679.916, slightly the best model.
+    print(llf.log_likelihood_)  # -679.938
+    print(lnf.log_likelihood_)  # -683.234
+    print(wf.log_likelihood_)   # -679.916, slightly the best model.
 
 
     # with some heterogeneity in the ancillary parameters
@@ -680,9 +658,9 @@ Often, you don't know *a priori* which AFT model to use. Each model has some ass
     lnf = LogNormalAFTFitter().fit(rossi, 'week', 'arrest', ancillary_df=ancillary_df)
     wf = WeibullAFTFitter().fit(rossi, 'week', 'arrest', ancillary_df=ancillary_df)
 
-    print(llf._log_likelihood) # -678.94, slightly the best model.
-    print(lnf._log_likelihood) # -680.39
-    print(wf._log_likelihood)  # -679.60
+    print(llf.log_likelihood_) # -678.94, slightly the best model.
+    print(lnf.log_likelihood_) # -680.39
+    print(wf.log_likelihood_)  # -679.60
 
 
 Left, right and interval censored data
@@ -967,7 +945,7 @@ Fitted survival models typically have a concordance index between 0.55 and 0.75 
     from lifelines.utils import concordance_index
     print(concordance_index(rossi['week'], -cph.predict_partial_hazard(rossi), rossi['arrest']))
 
-.. note:: Remember, the concordance score evaluates the relative rankings of subject's event times. Thus, it is scale invariant (i.e. you can multiple by a positive constant, or add a constant, and the rankings won't change). A model maximized for concordance-index does not necessarily give good predicted *times*, but will give good predicted *rankings*.
+.. note:: Remember, the concordance score evaluates the relative rankings of subject's event times. Thus, it is scale and shift invariant (i.e. you can multiple by a positive constant, or add a constant, and the rankings won't change). A model maximized for concordance-index does not necessarily give good predicted *times*, but will give good predicted *rankings*.
 
 
 However, there are other, arguably better, methods to measure the fit of a model. Included in ``print_summary`` is the log-likelihood, which can be used in an `AIC calculation <https://en.wikipedia.org/wiki/Akaike_information_criterion>`_, and the `log-likelihood ratio statistic <https://en.wikipedia.org/wiki/Likelihood-ratio_test>`_. Generally, I personally loved this article by Frank Harrell, `"Statistically Efficient Ways to Quantify Added Predictive Value of New Measurements" <http://www.fharrell.com/post/addvalue/>`_.

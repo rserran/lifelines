@@ -283,6 +283,7 @@ class ParametericUnivariateFitter(UnivariateFitter):
     _KNOWN_MODEL = False
     _MIN_PARAMETER_VALUE = 1e-9
     _scipy_fit_method = "L-BFGS-B"
+    _scipy_fit_options = dict()
 
     def __init__(self, *args, **kwargs):
         super(ParametericUnivariateFitter, self).__init__(*args, **kwargs)
@@ -360,7 +361,7 @@ class ParametericUnivariateFitter(UnivariateFitter):
                 yield (lb + self._MIN_PARAMETER_VALUE, ub - self._MIN_PARAMETER_VALUE)
 
     def _cumulative_hazard(self, params, times):
-        raise NotImplementedError("Subclass implements this.")
+        return -anp.log(self._survival_function(params, times))
 
     def _survival_function(self, params, times):
         return anp.exp(-self._cumulative_hazard(params, times))
@@ -370,13 +371,12 @@ class ParametericUnivariateFitter(UnivariateFitter):
 
     def _log_hazard(self, params, times):
         hz = self._hazard(params, times)
-        hz = anp.clip(hz, 1e-18, np.inf)
+        hz = anp.clip(hz, 1e-50, np.inf)
         return anp.log(hz)
 
     def _log_1m_sf(self, params, times):
         # equal to log(cdf), but often easier to express with sf.
-        cum_haz = self._cumulative_hazard(params, times)
-        return anp.log1p(-anp.exp(-cum_haz))
+        return anp.log1p(-self._survival_function(params, times))
 
     def _negative_log_likelihood_left_censoring(self, params, Ts, E, entry, W):
         T = Ts[1]
@@ -494,12 +494,14 @@ class ParametericUnivariateFitter(UnivariateFitter):
                 method=self._scipy_fit_method,
                 args=(Ts, E, entry, weights),
                 bounds=self._bounds,
-                options={"disp": show_progress},
+                options={**{"disp": show_progress}, **self._scipy_fit_options},
             )
 
             if results.success:
                 # pylint: disable=no-value-for-parameter
                 hessian_ = hessian(negative_log_likelihood)(results.x, Ts, E, entry, weights)
+                # see issue https://github.com/CamDavidsonPilon/lifelines/issues/801
+                hessian_ = (hessian_ + hessian_.T) / 2
                 return results.x, -results.fun * weights.sum(), hessian_ * weights.sum()
 
             # convergence failed.
@@ -607,7 +609,7 @@ class ParametericUnivariateFitter(UnivariateFitter):
         print(self)
         print("{} = {}".format(justify("number of subjects"), self.event_observed.shape[0]))
         print("{} = {}".format(justify("number of events"), np.where(self.event_observed)[0].shape[0]))
-        print("{} = {:.{prec}f}".format(justify("log-likelihood"), self._log_likelihood, prec=decimals))
+        print("{} = {:.{prec}f}".format(justify("log-likelihood"), self.log_likelihood_, prec=decimals))
         print(
             "{} = {}".format(
                 justify("hypothesis"),
@@ -901,7 +903,7 @@ class ParametericUnivariateFitter(UnivariateFitter):
             self._check_cumulative_hazard_is_monotone_and_positive(utils.coalesce(*Ts), self._initial_values)
 
         # estimation
-        self._fitted_parameters_, self._log_likelihood, self._hessian_ = self._fit_model(
+        self._fitted_parameters_, self.log_likelihood_, self._hessian_ = self._fit_model(
             Ts, self.event_observed.astype(bool), self.entry, self.weights, initial_point, show_progress=show_progress
         )
 
@@ -910,7 +912,6 @@ class ParametericUnivariateFitter(UnivariateFitter):
 
         for param_name, fitted_value in zip(self._fitted_parameter_names, self._fitted_parameters_):
             setattr(self, param_name, fitted_value)
-
         try:
             self.variance_matrix_ = inv(self._hessian_)
         except np.linalg.LinAlgError:
@@ -957,6 +958,14 @@ class ParametericUnivariateFitter(UnivariateFitter):
         self.cumulative_density_ = self.cumulative_density_at_times(self.timeline).to_frame()
 
         return self
+
+    @property
+    def _log_likelihood(self):
+        warnings.warn(
+            "Please use `log_likelihood` property instead. `_log_likelihood` will be removed in a future version of lifelines",
+            DeprecationWarning,
+        )
+        return self.log_likelihood_
 
     def _check_bounds_initial_point_names_shape(self):
         if len(self._bounds) != len(self._fitted_parameter_names) != self._initial_values.shape[0]:
@@ -1146,6 +1155,7 @@ class KnownModelParametericUnivariateFitter(ParametericUnivariateFitter):
 class ParametricRegressionFitter(BaseFitter):
 
     _scipy_fit_method = "BFGS"
+    _scipy_fit_options = dict()
     _KNOWN_MODEL = False
 
     def __init__(self, alpha=0.05, penalizer=0.0):
@@ -1291,7 +1301,10 @@ class ParametricRegressionFitter(BaseFitter):
             since the fitter is iterative, show convergence
             diagnostics. Useful if convergence is failing.
 
-        regressors: TODO
+        regressors: dict, optional
+            a dictionary of parameter names -> list of column names that maps model parameters
+            to a linear combination of variables. If left as None, all variables
+            will be used for all parameters.
 
         timeline: array, optional
             Specify a timeline that will be used for plotting and prediction
@@ -1415,7 +1428,7 @@ class ParametricRegressionFitter(BaseFitter):
 
         self._norm_std = pd.Series([_norm_std.loc[variable_name] for _, variable_name in _index], index=_index)
 
-        _params, self._log_likelihood, self._hessian_ = self._fit_model(
+        _params, self.log_likelihood_, self._hessian_ = self._fit_model(
             log_likelihood_function,
             Ts,
             self._create_Xs_dict(utils.normalize(df, 0, _norm_std)),
@@ -1442,6 +1455,14 @@ class ParametricRegressionFitter(BaseFitter):
             parameter_name: np.zeros(len(Xs.mappings[parameter_name]))
             for parameter_name in self._fitted_parameter_names
         }
+
+    @property
+    def _log_likelihood(self):
+        warnings.warn(
+            "Please use `log_likelihood_` property instead. `_log_likelihood` will be removed in a future version of lifelines",
+            DeprecationWarning,
+        )
+        return self.log_likelihood_
 
     def _add_penalty(self, params, neg_ll):
         params, _ = flatten(params)
@@ -1481,7 +1502,7 @@ class ParametricRegressionFitter(BaseFitter):
             method=self._scipy_fit_method,
             jac=True,
             args=(Ts, E, weights, entries, Xs),
-            options={"disp": show_progress},
+            options={**{"disp": show_progress}, **self._scipy_fit_options},
         )
         if show_progress or not results.success:
             print(results)
@@ -1489,6 +1510,8 @@ class ParametricRegressionFitter(BaseFitter):
             sum_weights = weights.sum()
             # pylint: disable=no-value-for-parameter
             hessian_ = hessian(self._neg_likelihood_with_penalty_function)(results.x, Ts, E, weights, entries, Xs)
+            # See issue https://github.com/CamDavidsonPilon/lifelines/issues/801
+            hessian_ = (hessian_ + hessian_.T) / 2
             return results.x, -sum_weights * results.fun, sum_weights * hessian_
 
         raise utils.ConvergenceError(
@@ -1529,6 +1552,18 @@ class ParametricRegressionFitter(BaseFitter):
                 % self._class_name
             )
             warnings.warn(warning_text, utils.StatisticalWarning)
+        finally:
+            if (unit_scaled_variance_matrix_.diagonal() < 0).any():
+                warning_text = dedent(
+                    """\
+                    The diagonal of the variance_matrix_ has negative values. This could be a problem with %s's fit to the data.
+
+                    It's advisable to not trust the variances reported, and to be suspicious of the
+                    fitted parameters too.
+                    """
+                    % self._class_name
+                )
+                warnings.warn(warning_text, utils.StatisticalWarning)
 
         return unit_scaled_variance_matrix_ / np.outer(self._norm_std, self._norm_std)
 
@@ -1540,14 +1575,15 @@ class ParametricRegressionFitter(BaseFitter):
         return stats.chi2.sf(U, 1)
 
     def _compute_standard_errors(self, Ts, E, weights, entries, Xs):
-        if self.robust:
-            se = np.sqrt(self._compute_sandwich_errors(Ts, E, weights, entries, Xs).diagonal())
-        else:
-            se = np.sqrt(self.variance_matrix_.diagonal())
-        return pd.Series(se, name="se", index=self.params_.index)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            if self.robust:
+                se = np.sqrt(self._compute_sandwich_errors(Ts, E, weights, entries, Xs).diagonal())
+            else:
+                se = np.sqrt(self.variance_matrix_.diagonal())
+            return pd.Series(se, name="se", index=self.params_.index)
 
     def _compute_sandwich_errors(self, Ts, E, weights, entries, Xs):
-
         with np.errstate(all="ignore"):
             # convergence will fail catastrophically elsewhere.
 
@@ -1597,7 +1633,7 @@ class ParametricRegressionFitter(BaseFitter):
                 df["T"], df["E"] = self.durations, self.event_observed
                 model.fit_left_censoring(df, "T", "E", entry_col="entry", weights_col="w", regressors=regressors)
 
-        self._ll_null_ = model._log_likelihood
+        self._ll_null_ = model.log_likelihood_
         return self._ll_null_
 
     def log_likelihood_ratio_test(self):
@@ -1609,7 +1645,7 @@ class ParametricRegressionFitter(BaseFitter):
         from lifelines.statistics import chisq_test, StatisticalResult
 
         ll_null = self._ll_null
-        ll_alt = self._log_likelihood
+        ll_alt = self.log_likelihood_
 
         test_stat = 2 * ll_alt - 2 * ll_null
         degrees_freedom = self.params_.shape[0] - 2  # delta in number of parameters between models
@@ -1679,7 +1715,7 @@ class ParametricRegressionFitter(BaseFitter):
 
         print("{} = {}".format(justify("number of subjects"), self._n_examples))
         print("{} = {}".format(justify("number of events"), self.event_observed.sum()))
-        print("{} = {:.{prec}f}".format(justify("log-likelihood"), self._log_likelihood, prec=decimals))
+        print("{} = {:.{prec}f}".format(justify("log-likelihood"), self.log_likelihood_, prec=decimals))
         print("{} = {}".format(justify("time fit was run"), self._time_fit_was_called))
 
         for k, v in kwargs.items():
@@ -1730,7 +1766,7 @@ class ParametricRegressionFitter(BaseFitter):
                 )
             )
 
-    def predict_survival_function(self, df, times=None):
+    def predict_survival_function(self, df, times=None, conditional_after=None):
         """
         Predict the survival function for individuals, given their covariates. This assumes that the individual
         just entered the study (that is, we do not condition on how long they have already lived for.)
@@ -1746,6 +1782,10 @@ class ParametricRegressionFitter(BaseFitter):
             an iterable of increasing times to predict the cumulative hazard at. Default
             is the set of all durations (observed and unobserved). Uses a linear interpolation if
             points in time are not in the index.
+        conditional_after: iterable, optional
+            Must be equal is size to df.shape[0] (denoted `n` above).  An iterable (array, list, series) of possibly non-zero values that represent how long the
+            subject has already lived for. Ex: if :math:`T` is the unknown event time, then this represents
+            :math`T | T > s`. This is useful for knowing the *remaining* hazard/survival of censored subjects.
 
 
         Returns
@@ -1753,9 +1793,9 @@ class ParametricRegressionFitter(BaseFitter):
         survival_function : DataFrame
             the survival probabilities of individuals over the timeline
         """
-        return np.exp(-self.predict_cumulative_hazard(df, times=times))
+        return np.exp(-self.predict_cumulative_hazard(df, times=times, conditional_after=conditional_after))
 
-    def predict_median(self, df):
+    def predict_median(self, df, conditional_after=None):
         """
         Predict the median lifetimes for the individuals. If the survival curve of an
         individual does not cross 0.5, then the result is infinity.
@@ -1766,6 +1806,11 @@ class ParametricRegressionFitter(BaseFitter):
             a (n,d) covariate numpy array or DataFrame. If a DataFrame, columns
             can be in any order. If a numpy array, columns must be in the
             same order as the training data.
+        conditional_after: iterable, optional
+            Must be equal is size to df.shape[0] (denoted `n` above).  An iterable (array, list, series) of possibly non-zero values that represent how long the
+            subject has already lived for. Ex: if :math:`T` is the unknown event time, then this represents
+            :math`T | T > s`. This is useful for knowing the *remaining* hazard/survival of censored subjects.
+            The new timeline is the remaining duration of the subject, i.e. normalized back to starting at 0.
 
         Returns
         -------
@@ -1779,13 +1824,13 @@ class ParametricRegressionFitter(BaseFitter):
         predict_percentile, predict_expectation
 
         """
-        return self.predict_percentile(df, p=0.5)
+        return self.predict_percentile(df, p=0.5, conditional_after=conditional_after)
 
-    def predict_percentile(self, df, p=0.5):
+    def predict_percentile(self, df, p=0.5, conditional_after=None):
         subjects = utils._get_index(df)
         return utils.qth_survival_times(p, self.predict_survival_function(df)[subjects]).T
 
-    def predict_cumulative_hazard(self, df, times=None):
+    def predict_cumulative_hazard(self, df, times=None, conditional_after=None):
         """
         Predict the cumulative hazard for individuals, given their covariates.
 
@@ -1797,9 +1842,13 @@ class ParametricRegressionFitter(BaseFitter):
             can be in any order. If a numpy array, columns must be in the
             same order as the training data.
         times: iterable, optional
-            an iterable of increasing times to predict the cumulative hazard at. Default
+            an iterable (array, list, series) of increasing times to predict the cumulative hazard at. Default
             is the set of all durations in the training dataset (observed and unobserved).
-
+        conditional_after: iterable, optional
+            Must be equal is size to df.shape[0] (denoted `n` above).  An iterable (array, list, series) of possibly non-zero values that represent how long the
+            subject has already lived for. Ex: if :math:`T` is the unknown event time, then this represents
+            :math`T | T > s`. This is useful for knowing the *remaining* hazard/survival of censored subjects.
+            The new timeline is the remaining duration of the subject, i.e. normalized back to starting at 0.
 
         Returns
         -------
@@ -1815,9 +1864,23 @@ class ParametricRegressionFitter(BaseFitter):
             parameter_name: self.params_.loc[parameter_name].values for parameter_name in self._fitted_parameter_names
         }
 
-        return pd.DataFrame(
-            self._cumulative_hazard(params_dict, np.tile(times, (n, 1)).T, Xs), index=times, columns=df.index
-        )
+        if conditional_after is None:
+            return pd.DataFrame(
+                self._cumulative_hazard(params_dict, np.tile(times, (n, 1)).T, Xs), index=times, columns=df.index
+            )
+        else:
+            conditional_after = np.asarray(conditional_after)
+            times_to_evaluate_at = (conditional_after[:, None] + np.tile(times, (n, 1))).T
+            return pd.DataFrame(
+                np.clip(
+                    self._cumulative_hazard(params_dict, times_to_evaluate_at, Xs)
+                    - self._cumulative_hazard(params_dict, conditional_after, Xs),
+                    0,
+                    np.inf,
+                ),
+                index=times,
+                columns=df.index,
+            )
 
     def predict_expectation(self, X):
         r"""
@@ -2049,6 +2112,7 @@ class ParametericAFTRegressionFitter(ParametricRegressionFitter):
         duration_col,
         event_col=None,
         ancillary_df=None,
+        fit_intercept=None,
         show_progress=False,
         timeline=None,
         weights_col=None,
@@ -2085,6 +2149,9 @@ class ParametericAFTRegressionFitter(ParametricRegressionFitter):
             If None or False, explicitly do not fit the ancillary parameters using any covariates.
             If True, model the ancillary parameters with the same covariates as ``df``.
             If DataFrame, provide covariates to model the ancillary parameters. Must be the same row count as ``df``.
+
+        fit_intercept: bool, optional
+            If true, add a constant column to the regression. Overrides value set in class instantiation.
 
         timeline: array, optional
             Specify a timeline that will be used for plotting and prediction
@@ -2131,6 +2198,7 @@ class ParametericAFTRegressionFitter(ParametricRegressionFitter):
         """
         self.duration_col = duration_col
         self._time_cols = [duration_col]
+        self.fit_intercept = utils.coalesce(fit_intercept, self.fit_intercept)
 
         df = df.copy()
 
@@ -2163,9 +2231,17 @@ class ParametericAFTRegressionFitter(ParametricRegressionFitter):
             regressors = {self._primary_parameter_name: primary_columns, self._ancillary_parameter_name: []}
 
         if self.fit_intercept:
-            assert "_intercept" not in df
+            assert (
+                "_intercept" not in df
+            ), "lifelines is trying to overwrite _intercept. Please rename _intercept to something else."
             df["_intercept"] = 1.0
             regressors[self._primary_parameter_name].append("_intercept")
+            regressors[self._ancillary_parameter_name].append("_intercept")
+        elif not self.fit_intercept and ((ancillary_df is None) or (ancillary_df is False) or not self.model_ancillary):
+            assert (
+                "_intercept" not in df
+            ), "lifelines is trying to overwrite _intercept. Please rename _intercept to something else."
+            df["_intercept"] = 1.0
             regressors[self._ancillary_parameter_name].append("_intercept")
 
         super(ParametericAFTRegressionFitter, self)._fit(
@@ -2191,6 +2267,7 @@ class ParametericAFTRegressionFitter(ParametricRegressionFitter):
         upper_bound_col,
         event_col=None,
         ancillary_df=None,
+        fit_intercept=None,
         show_progress=False,
         timeline=None,
         weights_col=None,
@@ -2219,15 +2296,18 @@ class ParametericAFTRegressionFitter(ParametricRegressionFitter):
             the  name of the column in DataFrame that contains the subjects' death
             observation. If left as None, will be inferred from the start and stop columns (lower_bound==upper_bound means uncensored)
 
-        show_progress: boolean, optional (default=False)
-            since the fitter is iterative, show convergence
-            diagnostics. Useful if convergence is failing.
-
         ancillary_df: None, boolean, or DataFrame, optional (default=None)
             Choose to model the ancillary parameters.
             If None or False, explicitly do not fit the ancillary parameters using any covariates.
             If True, model the ancillary parameters with the same covariates as ``df``.
             If DataFrame, provide covariates to model the ancillary parameters. Must be the same row count as ``df``.
+
+        fit_intercept: bool, optional
+            If true, add a constant column to the regression. Overrides value set in class instantiation.
+
+        show_progress: boolean, optional (default=False)
+            since the fitter is iterative, show convergence
+            diagnostics. Useful if convergence is failing.
 
         timeline: array, optional
             Specify a timeline that will be used for plotting and prediction
@@ -2275,6 +2355,7 @@ class ParametericAFTRegressionFitter(ParametricRegressionFitter):
 
         self.lower_bound_col = lower_bound_col
         self.upper_bound_col = upper_bound_col
+        self.fit_intercept = utils.coalesce(fit_intercept, self.fit_intercept)
         self._time_cols = [lower_bound_col, upper_bound_col]
 
         df = df.copy()
@@ -2317,9 +2398,17 @@ class ParametericAFTRegressionFitter(ParametricRegressionFitter):
             regressors = {self._primary_parameter_name: primary_columns, self._ancillary_parameter_name: []}
 
         if self.fit_intercept:
-            assert "_intercept" not in df
+            assert (
+                "_intercept" not in df
+            ), "lifelines is trying to overwrite _intercept. Please rename _intercept to something else."
             df["_intercept"] = 1.0
             regressors[self._primary_parameter_name].append("_intercept")
+            regressors[self._ancillary_parameter_name].append("_intercept")
+        elif not self.fit_intercept and ((ancillary_df is None) or (ancillary_df is False) or not self.model_ancillary):
+            assert (
+                "_intercept" not in df
+            ), "lifelines is trying to overwrite _intercept. Please rename _intercept to something else."
+            df["_intercept"] = 1.0
             regressors[self._ancillary_parameter_name].append("_intercept")
 
         super(ParametericAFTRegressionFitter, self)._fit(
@@ -2345,6 +2434,7 @@ class ParametericAFTRegressionFitter(ParametricRegressionFitter):
         duration_col=None,
         event_col=None,
         ancillary_df=None,
+        fit_intercept=None,
         show_progress=False,
         timeline=None,
         weights_col=None,
@@ -2372,15 +2462,19 @@ class ParametericAFTRegressionFitter(ParametricRegressionFitter):
             the  name of the column in DataFrame that contains the subjects' death
             observation. If left as None, assume all individuals are uncensored.
 
-        show_progress: boolean, optional (default=False)
-            since the fitter is iterative, show convergence
-            diagnostics. Useful if convergence is failing.
-
         ancillary_df: None, boolean, or DataFrame, optional (default=None)
             Choose to model the ancillary parameters.
             If None or False, explicitly do not fit the ancillary parameters using any covariates.
             If True, model the ancillary parameters with the same covariates as ``df``.
             If DataFrame, provide covariates to model the ancillary parameters. Must be the same row count as ``df``.
+
+        fit_intercept: bool, optional
+            If true, add a constant column to the regression. Overrides value set in class instantiation.
+
+        show_progress: boolean, optional (default=False)
+            since the fitter is iterative, show convergence
+            diagnostics. Useful if convergence is failing.
+
 
         timeline: array, optional
             Specify a timeline that will be used for plotting and prediction
@@ -2428,6 +2522,7 @@ class ParametericAFTRegressionFitter(ParametricRegressionFitter):
 
         T = utils.pass_for_numeric_dtypes_or_raise_array(df.pop(duration_col)).astype(float)
         self.durations = T.copy()
+        self.fit_intercept = utils.coalesce(fit_intercept, self.fit_intercept)
 
         primary_columns = df.columns.difference([duration_col, event_col]).tolist()
         if isinstance(ancillary_df, pd.DataFrame):
@@ -2449,9 +2544,17 @@ class ParametericAFTRegressionFitter(ParametricRegressionFitter):
             regressors = {self._primary_parameter_name: primary_columns, self._ancillary_parameter_name: []}
 
         if self.fit_intercept:
-            assert "_intercept" not in df
+            assert (
+                "_intercept" not in df
+            ), "lifelines is trying to overwrite _intercept. Please rename _intercept to something else."
             df["_intercept"] = 1.0
             regressors[self._primary_parameter_name].append("_intercept")
+            regressors[self._ancillary_parameter_name].append("_intercept")
+        elif not self.fit_intercept and ((ancillary_df is None) or (ancillary_df is False) or not self.model_ancillary):
+            assert (
+                "_intercept" not in df
+            ), "lifelines is trying to overwrite _intercept. Please rename _intercept to something else."
+            df["_intercept"] = 1.0
             regressors[self._ancillary_parameter_name].append("_intercept")
 
         super(ParametericAFTRegressionFitter, self)._fit(
@@ -2470,18 +2573,18 @@ class ParametericAFTRegressionFitter(ParametricRegressionFitter):
 
         return self
 
-    @staticmethod
-    def _transform_ith_param(model, i):
-        param = model._fitted_parameters_[i]
-        if param <= 0:
-            return param
-        # technically this is suboptimal for log normal mu, but that's okay.
-        return np.log(param)
-
     def _create_initial_point(self, Ts, E, entries, weights, Xs):
         """
         See https://github.com/CamDavidsonPilon/lifelines/issues/664
         """
+        constant_col = (Xs.df.var(0) < 1e-8).idxmax()
+
+        def _transform_ith_param(param):
+            if param <= 0:
+                return param
+            # technically this is suboptimal for log normal mu, but that's okay.
+            return np.log(param)
+
         import lifelines  # kinda hacky but lol
 
         name = self._class_name.replace("AFT", "")
@@ -2499,14 +2602,15 @@ class ParametericAFTRegressionFitter(ParametricRegressionFitter):
             uni_model.fit_left_censoring(Ts[1], event_observed=E, entry=entries, weights=weights)
 
         # we may use this later in print_summary
-        self._ll_null_ = uni_model._log_likelihood
+        self._ll_null_ = uni_model.log_likelihood_
 
-        # TODO: this fails with fit_intercept=False
-        return {
-            # tack on as the intercept
-            parameter_name: np.array([0] * (_X.shape[1] - 1) + [self._transform_ith_param(uni_model, i)])
-            for i, (parameter_name, _X) in enumerate(Xs)
-        }
+        d = {}
+
+        for param, mapping in Xs.mappings.items():
+            d[param] = np.array([0.0] * (len(mapping)))
+            if constant_col in mapping:
+                d[param][mapping.index(constant_col)] = _transform_ith_param(getattr(uni_model, param))
+        return d
 
     def _add_penalty(self, params, neg_ll):
         params, _ = flatten(params)
@@ -2675,9 +2779,8 @@ class ParametericAFTRegressionFitter(ParametricRegressionFitter):
         X = X.copy()
 
         if isinstance(X, pd.DataFrame):
-            if self.fit_intercept:
-                X["_intercept"] = 1.0
-            X = X[self.params_.loc[self._primary_parameter_name].index]
+            X["_intercept"] = 1.0
+            primary_X = X[self.params_.loc[self._primary_parameter_name].index]
         else:
             # provided numpy array
             assert X.shape[1] == self.params_.loc[self._primary_parameter_name].shape[0]
@@ -2698,12 +2801,12 @@ class ParametericAFTRegressionFitter(ParametricRegressionFitter):
         primary_params = self.params_[self._primary_parameter_name]
         ancillary_params = self.params_[self._ancillary_parameter_name]
 
-        primary_scores = np.exp(np.dot(X, primary_params))
-        ancillary_scores = np.exp(np.dot(ancillary_X, ancillary_params))
+        primary_scores = np.exp(primary_X @ primary_params)
+        ancillary_scores = np.exp(ancillary_X @ ancillary_params)
 
         return primary_scores, ancillary_scores
 
-    def predict_survival_function(self, df, ancillary_df=None, times=None):
+    def predict_survival_function(self, df, ancillary_df=None, times=None, conditional_after=None):
         """
         Predict the survival function for individuals, given their covariates. This assumes that the individual
         just entered the study (that is, we do not condition on how long they have already lived for.)
@@ -2720,9 +2823,13 @@ class ParametericAFTRegressionFitter(ParametricRegressionFitter):
             can be in any order. If a numpy array, columns must be in the
             same order as the training data.
         times: iterable, optional
-            an iterable of increasing times to predict the cumulative hazard at. Default
-            is the set of all durations (observed and unobserved). Uses a linear interpolation if
-            points in time are not in the index.
+            an iterable of increasing times to predict the survival function at. Default
+            is the set of all durations (observed and unobserved).
+        conditional_after: iterable, optional
+            Must be equal is size to df.shape[0] (denoted `n` above).  An iterable (array, list, series) of possibly non-zero values that represent how long the
+            subject has already lived for. Ex: if :math:`T` is the unknown event time, then this represents
+            :math`T | T > s`. This is useful for knowing the *remaining* hazard/survival of censored subjects.
+            The new timeline is the remaining duration of the subject, i.e. normalized back to starting at 0.
 
 
         Returns
@@ -2730,9 +2837,13 @@ class ParametericAFTRegressionFitter(ParametricRegressionFitter):
         survival_function : DataFrame
             the survival probabilities of individuals over the timeline
         """
-        return np.exp(-self.predict_cumulative_hazard(df, ancillary_df=ancillary_df, times=times))
+        return np.exp(
+            -self.predict_cumulative_hazard(
+                df, ancillary_df=ancillary_df, times=times, conditional_after=conditional_after
+            )
+        )
 
-    def predict_median(self, df, ancillary_df=None):
+    def predict_median(self, df, ancillary_df=None, conditional_after=None):
         """
         Predict the median lifetimes for the individuals. If the survival curve of an
         individual does not cross 0.5, then the result is infinity.
@@ -2743,6 +2854,12 @@ class ParametericAFTRegressionFitter(ParametricRegressionFitter):
             a (n,d) covariate numpy array or DataFrame. If a DataFrame, columns
             can be in any order. If a numpy array, columns must be in the
             same order as the training data.
+        conditional_after: iterable, optional
+            Must be equal is size to df.shape[0] (denoted `n` above).  An iterable (array, list, series) of possibly non-zero values that represent how long the
+            subject has already lived for. Ex: if :math:`T` is the unknown event time, then this represents
+            :math`T | T > s`. This is useful for knowing the *remaining* hazard/survival of censored subjects.
+            The new timeline is the remaining duration of the subject, i.e. normalized back to starting at 0.
+
 
         Returns
         -------
@@ -2757,12 +2874,12 @@ class ParametericAFTRegressionFitter(ParametricRegressionFitter):
 
         """
 
-        return self.predict_percentile(df, ancillary_df=ancillary_df, p=0.5)
+        return self.predict_percentile(df, ancillary_df=ancillary_df, p=0.5, conditional_after=conditional_after)
 
     def predict_percentile(self, df, ancillary_df=None, p=0.5):
         return utils.qth_survival_times(p, self.predict_survival_function(df, ancillary_df=ancillary_df))
 
-    def predict_cumulative_hazard(self, df, ancillary_df=None, times=None):
+    def predict_cumulative_hazard(self, df, ancillary_df=None, times=None, conditional_after=None):
         """
         Predict the median lifetimes for the individuals. If the survival curve of an
         individual does not cross 0.5, then the result is infinity.
@@ -2773,6 +2890,15 @@ class ParametericAFTRegressionFitter(ParametricRegressionFitter):
             a (n,d) covariate numpy array or DataFrame. If a DataFrame, columns
             can be in any order. If a numpy array, columns must be in the
             same order as the training data.
+        times: iterable, optional
+            an iterable of increasing times to predict the cumulative hazard at. Default
+            is the set of all durations (observed and unobserved).
+        conditional_after: iterable, optional
+            Must be equal is size to df.shape[0] (denoted `n` above).  An iterable (array, list, series) of possibly non-zero values that represent how long the
+            subject has already lived for. Ex: if :math:`T` is the unknown event time, then this represents
+            :math`T | T > s`. This is useful for knowing the *remaining* hazard/survival of censored subjects.
+            The new timeline is the remaining duration of the subject, i.e. normalized back to starting at 0.
+
 
         Returns
         -------
@@ -2800,9 +2926,23 @@ class ParametericAFTRegressionFitter(ParametricRegressionFitter):
         Xs = self._create_Xs_dict(df)
 
         params_dict = {
-            parameter_name: self.params_.loc[parameter_name] for parameter_name in self._fitted_parameter_names
+            parameter_name: self.params_.loc[parameter_name].values for parameter_name in self._fitted_parameter_names
         }
 
-        return pd.DataFrame(
-            self._cumulative_hazard(params_dict, np.tile(times, (n, 1)).T, Xs), index=times, columns=df.index
-        )
+        if conditional_after is None:
+            return pd.DataFrame(
+                self._cumulative_hazard(params_dict, np.tile(times, (n, 1)).T, Xs), index=times, columns=df.index
+            )
+        else:
+            conditional_after = np.asarray(conditional_after)
+            times_to_evaluate_at = (conditional_after[:, None] + np.tile(times, (n, 1))).T
+            return pd.DataFrame(
+                np.clip(
+                    self._cumulative_hazard(params_dict, times_to_evaluate_at, Xs)
+                    - self._cumulative_hazard(params_dict, conditional_after, Xs),
+                    0,
+                    np.inf,
+                ),
+                index=times,
+                columns=df.index,
+            )

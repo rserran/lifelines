@@ -5,6 +5,7 @@ import pandas as pd
 
 from lifelines.utils import _get_index, coalesce
 from lifelines.fitters import ParametericAFTRegressionFitter
+from lifelines.utils.safe_exp import safe_exp
 
 
 class WeibullAFTFitter(ParametericAFTRegressionFitter):
@@ -69,23 +70,23 @@ class WeibullAFTFitter(ParametericAFTRegressionFitter):
 
     def _cumulative_hazard(self, params, T, Xs):
         lambda_params = params["lambda_"]
-        log_lambda_ = np.dot(Xs["lambda_"], lambda_params)
+        log_lambda_ = Xs["lambda_"] @ lambda_params
 
         rho_params = params["rho_"]
-        rho_ = np.exp(np.dot(Xs["rho_"], rho_params))
+        rho_ = safe_exp(Xs["rho_"] @ rho_params)
 
-        return np.exp(rho_ * (np.log(np.clip(T, 1e-25, np.inf)) - log_lambda_))
+        return safe_exp(rho_ * (np.log(np.clip(T, 1e-25, np.inf)) - log_lambda_))
 
     def _log_hazard(self, params, T, Xs):
         lambda_params = params["lambda_"]
-        log_lambda_ = np.dot(Xs["lambda_"], lambda_params)
+        log_lambda_ = Xs["lambda_"] @ lambda_params
 
         rho_params = params["rho_"]
-        log_rho_ = np.dot(Xs["rho_"], rho_params)
+        log_rho_ = Xs["rho_"] @ rho_params
 
         return log_rho_ - log_lambda_ + np.expm1(log_rho_) * (np.log(T) - log_lambda_)
 
-    def predict_percentile(self, df, ancillary_df=None, p=0.5):
+    def predict_percentile(self, df, ancillary_df=None, p=0.5, conditional_after=None):
         """
         Returns the median lifetimes for the individuals, by default. If the survival curve of an
         individual does not cross 0.5, then the result is infinity.
@@ -115,7 +116,12 @@ class WeibullAFTFitter(ParametericAFTRegressionFitter):
         """
         lambda_, rho_ = self._prep_inputs_for_prediction_and_return_scores(df, ancillary_df)
 
-        return pd.DataFrame(lambda_ * np.power(-np.log(p), 1 / rho_), index=_get_index(df))
+        if conditional_after is None:
+            conditional_after = np.zeros(df.shape[0])
+        return pd.DataFrame(
+            lambda_ * np.power(-np.log(p) + (conditional_after / lambda_) ** rho_, 1 / rho_) - conditional_after,
+            index=_get_index(df),
+        )
 
     def predict_expectation(self, df, ancillary_df=None):
         """

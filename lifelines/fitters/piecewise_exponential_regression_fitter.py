@@ -3,6 +3,7 @@ import autograd.numpy as np
 from lifelines.utils import coalesce, _get_index, CensoringType
 from lifelines.fitters import ParametricRegressionFitter
 import pandas as pd
+from lifelines.utils.safe_exp import safe_exp
 
 
 class PiecewiseExponentialRegressionFitter(ParametricRegressionFitter):
@@ -37,7 +38,7 @@ class PiecewiseExponentialRegressionFitter(ParametricRegressionFitter):
         T = T.reshape((n, 1))
         M = np.minimum(np.tile(self.breakpoints, (n, 1)), T)
         M = np.hstack([M[:, tuple([0])], np.diff(M, axis=1)])
-        lambdas_ = np.array([np.exp(-np.dot(Xs[param], params[param])) for param in self._fitted_parameter_names])
+        lambdas_ = np.array([safe_exp(-np.dot(Xs[param], params[param])) for param in self._fitted_parameter_names])
         return (M * lambdas_.T).sum(1)
 
     def _log_hazard(self, params, T, X):
@@ -53,7 +54,7 @@ class PiecewiseExponentialRegressionFitter(ParametricRegressionFitter):
 
         return np.array([np.exp(np.dot(X, self.params_["lambda_%d_" % i])) for i in range(self.n_breakpoints)])
 
-    def predict_cumulative_hazard(self, df, times=None):
+    def predict_cumulative_hazard(self, df, times=None, conditional_after=None):
         """
         Return the cumulative hazard rate of subjects in X at time points.
 
@@ -73,6 +74,10 @@ class PiecewiseExponentialRegressionFitter(ParametricRegressionFitter):
         cumulative_hazard_ : DataFrame
             the cumulative hazard of individuals over the timeline
         """
+
+        if conditional_after is not None:
+            raise NotImplementedError()
+
         times = np.asarray(coalesce(times, self.timeline, np.unique(self.durations)))
         n = times.shape[0]
         times = times.reshape((n, 1))
@@ -115,5 +120,5 @@ class PiecewiseExponentialRegressionFitter(ParametricRegressionFitter):
         if CensoringType.is_left_censoring(self):
             raise NotImplementedError()
 
-        self._ll_null_ = model._log_likelihood
+        self._ll_null_ = model.log_likelihood_
         return self._ll_null_

@@ -1,16 +1,27 @@
 ### Changelog
 
+
 #### 0.22.3
+
+##### New features
+ - model's now expose a `log_likelihood_` property.
+ - new `conditional_after` argument on `predict_*` methods that make prediction on censored subjects easier.
+ - new `lifelines.utils.safe_exp` to make `exp` overflows easier to handle.
+ - smarter initial conditions for parametric regression models.
+ - New regression model: `GeneralizedGammaRegressionFitter`
 
 ##### API changes
  - removed `lifelines.utils.gamma` - use `autograd_gamma` library instead.
+ - removed bottleneck as a dependency. It offered slight performance gains only in Cox models, and only a small fraction of the API was being used.
 
 ##### Bug fixes
  - AFT log-likelihood ratio test was not using weights correctly.
  - corrected (by bumping) scipy and autograd dependencies
+ - convergence is improved for most models, and many `exp` overflow warnings have been eliminated.
+ - Fixed an error in the `predict_percentile` of `LogLogisticAFTFitter`. New tests have been added around this.
 
 
-#### 0.22.2
+#### 0.22.2 - 2019-07-25
 
 ##### New features
  - lifelines is now compatible with scipy>=1.3.0
