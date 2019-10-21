@@ -6,7 +6,7 @@ import pandas as pd
 
 from lifelines.fitters import UnivariateFitter
 from lifelines import NelsonAalenFitter
-from lifelines.utils import _to_array, coalesce, CensoringType
+from lifelines.utils import _to_1d_array, coalesce, CensoringType
 
 
 class BreslowFlemingHarringtonFitter(UnivariateFitter):
@@ -38,6 +38,7 @@ class BreslowFlemingHarringtonFitter(UnivariateFitter):
         label="BFH_estimate",
         alpha=None,
         ci_labels=None,
+        weights=None,
     ):  # pylint: disable=too-many-arguments
         """
         Parameters
@@ -73,12 +74,13 @@ class BreslowFlemingHarringtonFitter(UnivariateFitter):
         naf.fit(
             durations, event_observed=event_observed, timeline=timeline, label=label, entry=entry, ci_labels=ci_labels
         )
-        self.durations, self.event_observed, self.timeline, self.entry, self.event_table = (
+        self.durations, self.event_observed, self.timeline, self.entry, self.event_table, self.weights = (
             naf.durations,
             naf.event_observed,
             naf.timeline,
             naf.entry,
             naf.event_table,
+            naf.weights,
         )
 
         # estimation
@@ -108,4 +110,4 @@ class BreslowFlemingHarringtonFitter(UnivariateFitter):
 
         """
         label = coalesce(label, self._label)
-        return pd.Series(self.predict(times), index=_to_array(times), name=label)
+        return pd.Series(self.predict(times), index=_to_1d_array(times), name=label)

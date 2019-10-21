@@ -10,7 +10,6 @@ from numpy.linalg import norm, inv
 from scipy.linalg import solve as spsolve, LinAlgError
 from scipy.integrate import trapz
 from scipy import stats
-from numpy import sum as array_sum_to_scalar
 
 from lifelines.fitters import BaseFitter
 from lifelines.plotting import set_kwargs_ax, set_kwargs_drawstyle
@@ -21,7 +20,7 @@ from lifelines.utils import (
     _get_index,
     _to_list,
     _to_tuple,
-    _to_array,
+    _to_1d_array,
     inv_normal_cdf,
     normalize,
     qth_survival_times,
@@ -39,20 +38,18 @@ from lifelines.utils import (
     format_p_value,
     format_floats,
     format_exp_floats,
-    dataframe_interpolate_at_times,
+    interpolate_at_times_and_return_pandas,
     CensoringType,
+    interpolate_at_times,
+    leading_space,
 )
 
 __all__ = ["CoxPHFitter"]
 
-matrix_axis_0_sum_to_array = lambda m: np.sum(m, 0)
-
 
 class BatchVsSingle:
     @staticmethod
-    def decide(batch_mode, T):
-        n_total = T.shape[0]
-        n_unique = T.unique().shape[0]
+    def decide(batch_mode, n_unique, n_total, n_vars):
         frac_dups = n_unique / n_total
         if batch_mode or (
             # https://github.com/CamDavidsonPilon/lifelines/issues/591 for original issue.
@@ -60,12 +57,14 @@ class BatchVsSingle:
             (batch_mode is None)
             and (
                 (
-                    5.302813e-01
-                    + -1.789398e-06 * n_total
-                    + -3.496285e-11 * n_total ** 2
-                    + 2.756569e00 * frac_dups
-                    + -1.306258e00 * frac_dups ** 2
-                    + 9.535042e-06 * n_total * frac_dups
+                    6.876218e-01
+                    + -1.796993e-06 * n_total
+                    + -1.204271e-11 * n_total ** 2
+                    + 1.912500e00 * frac_dups
+                    + -8.121036e-01 * frac_dups ** 2
+                    + 4.916605e-06 * n_total * frac_dups
+                    + -5.888875e-03 * n_vars
+                    + 5.473434e-09 * n_vars * n_total
                 )
                 < 1
             )
@@ -439,7 +438,7 @@ estimate the variances. See paper "Variance estimation when using inverse probab
 
         # Method of choice is just efron right now
         if self.tie_method == "Efron":
-            decision = BatchVsSingle.decide(self._batch_mode, T)
+            decision = BatchVsSingle.decide(self._batch_mode, T.nunique(), X.shape[0], X.shape[1])
             get_gradients = getattr(self, "_get_efron_values_%s" % decision)
             self._batch_mode = decision == "batch"
         else:
@@ -677,9 +676,7 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
                 continue
 
             # There was atleast one event and no more ties remain. Time to sum.
-            #
             # This code is near identical to the _batch algorithm below. In fact, see _batch for comments.
-            #
             weighted_average = weight_count / tied_death_counts
 
             if tied_death_counts > 1:
@@ -730,22 +727,22 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
             phi_i = weights_at_t
 
             # Calculate sums of Risk set
-            risk_phi = risk_phi + array_sum_to_scalar(phi_i)
+            risk_phi = risk_phi + phi_i.sum()
 
             # Calculate the sums of Tie set
             deaths = E[slice_]
 
-            tied_death_counts = array_sum_to_scalar(deaths.astype(int))
+            tied_death_counts = deaths.astype(int).sum()
             if tied_death_counts == 0:
                 # no deaths, can continue
                 pos -= count_of_removals
                 continue
 
             weights_deaths = weights_at_t[deaths]
-            weight_count = array_sum_to_scalar(weights_deaths)
+            weight_count = weights_deaths.sum()
 
             if tied_death_counts > 1:
-                tie_phi = array_sum_to_scalar(phi_i[deaths])
+                tie_phi = phi_i[deaths].sum()
                 factor = np.log(risk_phi - np.arange(tied_death_counts) * tie_phi / tied_death_counts).sum()
             else:
                 factor = np.log(risk_phi)
@@ -840,6 +837,7 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
         _, counts = np.unique(-T, return_counts=True)
         scores = weights * np.exp(np.dot(X, beta))
         pos = n
+        ZERO_TO_N = np.arange(counts.max())
 
         for count_of_removals in counts:
 
@@ -847,31 +845,34 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
 
             X_at_t = X[slice_]
             weights_at_t = weights[slice_]
+            deaths = E[slice_]
 
             phi_i = scores[slice_, None]
             phi_x_i = phi_i * X_at_t
             phi_x_x_i = np.dot(X_at_t.T, phi_x_i)
 
             # Calculate sums of Risk set
-            risk_phi = risk_phi + array_sum_to_scalar(phi_i)
-            risk_phi_x = risk_phi_x + matrix_axis_0_sum_to_array(phi_x_i)
+            risk_phi = risk_phi + phi_i.sum()
+            risk_phi_x = risk_phi_x + (phi_x_i).sum(0)
             risk_phi_x_x = risk_phi_x_x + phi_x_x_i
 
             # Calculate the sums of Tie set
-            deaths = E[slice_]
-
-            tied_death_counts = array_sum_to_scalar(deaths.astype(int))
+            tied_death_counts = deaths.sum()
             if tied_death_counts == 0:
                 # no deaths, can continue
                 pos -= count_of_removals
                 continue
 
+            """
+            I think there is another optimization that can be made if we sort on
+            T and E. Using some accounting, we can skip all the [death] indexing below.
+            """
             xi_deaths = X_at_t[deaths]
             weights_deaths = weights_at_t[deaths]
 
-            x_death_sum = matrix_axis_0_sum_to_array(weights_deaths[:, None] * xi_deaths)
+            x_death_sum = np.einsum("a,ab->b", weights_deaths, xi_deaths)
 
-            weight_count = array_sum_to_scalar(weights_deaths)
+            weight_count = weights_deaths.sum()
             weighted_average = weight_count / tied_death_counts
 
             if tied_death_counts > 1:
@@ -880,11 +881,12 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
                 # https://github.com/CamDavidsonPilon/lifelines/blob/e7056e7817272eb5dff5983556954f56c33301b1/lifelines/fitters/coxph_fitter.py#L755-L789
 
                 # it's faster if we can skip computing these when we don't need to.
-                tie_phi = array_sum_to_scalar(phi_i[deaths])
-                tie_phi_x = matrix_axis_0_sum_to_array(phi_x_i[deaths])
-                tie_phi_x_x = np.dot(xi_deaths.T, phi_i[deaths] * xi_deaths)
+                phi_x_i_deaths = phi_x_i[deaths]
+                tie_phi = phi_i[deaths].sum()
+                tie_phi_x = (phi_x_i_deaths).sum(0)
+                tie_phi_x_x = np.dot(xi_deaths.T, phi_x_i_deaths)
 
-                increasing_proportion = np.arange(tied_death_counts) / tied_death_counts
+                increasing_proportion = ZERO_TO_N[:tied_death_counts] / tied_death_counts
                 denom = 1.0 / (risk_phi - increasing_proportion * tie_phi)
                 numer = risk_phi_x - np.outer(increasing_proportion, tie_phi_x)
 
@@ -934,7 +936,7 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
         partial_hazard = self.predict_partial_hazard(X)[0].values
 
         if not self.strata:
-            baseline_at_T = self.baseline_cumulative_hazard_.loc[T, "baseline hazard"].values
+            baseline_at_T = self.baseline_cumulative_hazard_.loc[T, "baseline cumulative hazard"].values
         else:
             baseline_at_T = np.empty(0)
             for name, T_ in T.groupby(by=self.strata):
@@ -1157,12 +1159,12 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
             xi = X[i : i + 1]
             phi_i = phi_s[i]
 
-            score = -phi_i * matrix_axis_0_sum_to_array(
+            score = -phi_i * (
                 (
                     E[: i + 1] * weights[: i + 1] / risk_phi_history[: i + 1].T
                 ).T  # this is constant-ish, and could be cached
                 * (xi - risk_phi_x_history[: i + 1] / risk_phi_history[: i + 1])
-            )
+            ).sum(0)
 
             if E[i]:
                 score = score + (xi - risk_phi_x_history[i] / risk_phi_history[i])
@@ -1266,7 +1268,8 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
         """
 
         # Print information about data first
-        justify = string_justify(18)
+        justify = string_justify(25)
+
         print(self)
         print("{} = '{}'".format(justify("duration col"), self.duration_col))
 
@@ -1287,8 +1290,8 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
         if self.penalizer > 0:
             print("{} = {}".format(justify("penalizer"), self.penalizer))
 
-        print("{} = {}".format(justify("number of subjects"), self._n_examples))
-        print("{} = {}".format(justify("number of events"), self.event_observed.sum()))
+        print("{} = {:g}".format(justify("number of observations"), self.weights.sum()))
+        print("{} = {:g}".format(justify("number of events observed"), self.weights[self.event_observed > 0].sum()))
         print("{} = {:.{prec}f}".format(justify("partial log-likelihood"), self.log_likelihood_, prec=decimals))
         print("{} = {}".format(justify("time fit was run"), self._time_fit_was_called))
 
@@ -1299,23 +1302,24 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
         print("---")
 
         df = self.summary
-
+        df.columns = [leading_space(c) for c in df.columns]
+        ci = 100 * (1 - self.alpha)
         print(
             df.to_string(
                 float_format=format_floats(decimals),
                 formatters={
-                    "exp(coef)": format_exp_floats(decimals),
-                    "exp(coef) lower 95%": format_exp_floats(decimals),
-                    "exp(coef) upper 95%": format_exp_floats(decimals),
+                    leading_space("exp(coef)"): format_exp_floats(decimals),
+                    leading_space("exp(coef) lower %g%%" % ci): format_exp_floats(decimals),
+                    leading_space("exp(coef) upper %g%%" % ci): format_exp_floats(decimals),
                 },
                 columns=[
-                    "coef",
-                    "exp(coef)",
-                    "se(coef)",
-                    "coef lower 95%",
-                    "coef upper 95%",
-                    "exp(coef) lower 95%",
-                    "exp(coef) upper 95%",
+                    leading_space("coef"),
+                    leading_space("exp(coef)"),
+                    leading_space("se(coef)"),
+                    leading_space("coef lower %g%%" % ci),
+                    leading_space("coef upper %g%%" % ci),
+                    leading_space("exp(coef) lower %g%%" % ci),
+                    leading_space("exp(coef) upper %g%%" % ci),
                 ],
             )
         )
@@ -1323,8 +1327,8 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
         print(
             df.to_string(
                 float_format=format_floats(decimals),
-                formatters={"p": format_p_value(decimals)},
-                columns=["z", "p", "-log2(p)"],
+                formatters={leading_space("p"): format_p_value(decimals)},
+                columns=[leading_space("z"), leading_space("p"), leading_space("-log2(p)")],
             )
         )
 
@@ -1431,7 +1435,7 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
         if isinstance(X, pd.DataFrame):
             order = hazard_names
             X = X.reindex(order, axis="columns")
-            check_for_numeric_dtypes_or_raise(X)
+            X = X.astype(float)
             X = X.values
 
         X = X.astype(float)
@@ -1456,46 +1460,76 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
             Must be equal is size to X.shape[0] (denoted `n` above).  An iterable (array, list, series) of possibly non-zero values that represent how long the
             subject has already lived for. Ex: if :math:`T` is the unknown event time, then this represents
             :math`T | T > s`. This is useful for knowing the *remaining* hazard/survival of censored subjects.
-            The new timeline is the remaining duration of the subject, i.e. normalized back to starting at 0.
+            The new timeline is the remaining duration of the subject, i.e. reset back to starting at 0.
 
         Returns
         -------
         cumulative_hazard_ : DataFrame
             the cumulative hazard of individuals over the timeline
         """
+        if isinstance(X, pd.Series):
+            return self.predict_cumulative_hazard(X.to_frame().T, times=times, conditional_after=conditional_after)
+
+        n = X.shape[0]
+
+        if times is not None:
+            times = np.atleast_1d(times).astype(float)
         if conditional_after is not None:
-            raise NotImplementedError("Sorry, conditional_after for Cox is tricky to do. It's not implemented yet.")
+            conditional_after = _to_1d_array(conditional_after).reshape(n, 1)
 
         if self.strata:
             cumulative_hazard_ = pd.DataFrame()
             for stratum, stratified_X in X.groupby(self.strata):
                 try:
-                    c_0 = self.baseline_cumulative_hazard_[[stratum]]
+                    strata_c_0 = self.baseline_cumulative_hazard_[[stratum]]
                 except KeyError:
                     raise StatError(
-                        """The stratum %s was not found in the original training data. For example, try
-the following on the original dataset, df: `df.groupby(%s).size()`. Expected is that %s is not present in the output.
-"""
-                        % (stratum, self.strata, stratum)
+                        dedent(
+                            """The stratum %s was not found in the original training data. For example, try
+                            the following on the original dataset, df: `df.groupby(%s).size()`. Expected is that %s is not present in the output."""
+                            % (stratum, self.strata, stratum)
+                        )
                     )
                 col = _get_index(stratified_X)
                 v = self.predict_partial_hazard(stratified_X)
+                times_ = coalesce(times, self.baseline_cumulative_hazard_.index)
+                n_ = stratified_X.shape[0]
+                if conditional_after is not None:
+                    times_to_evaluate_at = np.tile(times_, (n_, 1)) + conditional_after
+
+                    c_0_ = interpolate_at_times(strata_c_0, times_to_evaluate_at)
+                    c_0_conditional_after = interpolate_at_times(strata_c_0, conditional_after)
+                    c_0_ = np.clip((c_0_ - c_0_conditional_after).T, 0, np.inf)
+
+                else:
+                    times_to_evaluate_at = np.tile(times_, (n_, 1))
+                    c_0_ = interpolate_at_times(strata_c_0, times_to_evaluate_at).T
+
                 cumulative_hazard_ = cumulative_hazard_.merge(
-                    pd.DataFrame(np.dot(c_0, v.T), index=c_0.index, columns=col),
+                    pd.DataFrame(c_0_ * v.values[:, 0], columns=col, index=times_),
                     how="outer",
                     right_index=True,
                     left_index=True,
                 )
         else:
-            c_0 = self.baseline_cumulative_hazard_
+
             v = self.predict_partial_hazard(X)
             col = _get_index(v)
+            times_ = coalesce(times, self.baseline_cumulative_hazard_.index)
 
-            cumulative_hazard_ = pd.DataFrame(np.dot(c_0, v.T), columns=col, index=c_0.index)
+            if conditional_after is not None:
+                times_to_evaluate_at = np.tile(times_, (n, 1)) + conditional_after
 
-        if times is not None:
-            # non-linear interpolations can push the survival curves above 1 and below 0.
-            return dataframe_interpolate_at_times(cumulative_hazard_, times)
+                c_0 = interpolate_at_times(self.baseline_cumulative_hazard_, times_to_evaluate_at)
+                c_0_conditional_after = interpolate_at_times(self.baseline_cumulative_hazard_, conditional_after)
+                c_0 = np.clip((c_0 - c_0_conditional_after).T, 0, np.inf)
+
+            else:
+                times_to_evaluate_at = np.tile(times_, (n, 1))
+                c_0 = interpolate_at_times(self.baseline_cumulative_hazard_, times_to_evaluate_at).T
+
+            cumulative_hazard_ = pd.DataFrame(c_0 * v.values[:, 0], columns=col, index=times_)
+
         return cumulative_hazard_
 
     def predict_survival_function(self, X, times=None, conditional_after=None):
@@ -1560,7 +1594,7 @@ the following on the original dataset, df: `df.groupby(%s).size()`. Expected is 
         subjects = _get_index(X)
         return qth_survival_times(p, self.predict_survival_function(X, conditional_after=conditional_after)[subjects]).T
 
-    def predict_median(self, X):
+    def predict_median(self, X, conditional_after=None):
         """
         Predict the median lifetimes for the individuals. If the survival curve of an
         individual does not cross 0.5, then the result is infinity.
@@ -1584,7 +1618,7 @@ the following on the original dataset, df: `df.groupby(%s).size()`. Expected is 
         predict_percentile
 
         """
-        return self.predict_percentile(X, 0.5)
+        return self.predict_percentile(X, 0.5, conditional_after=conditional_after)
 
     def predict_expectation(self, X):
         r"""
@@ -1634,6 +1668,7 @@ the following on the original dataset, df: `df.groupby(%s).size()`. Expected is 
         baseline_hazard = pd.DataFrame(
             ind_hazards_summed_over_durations["E"] / ind_hazards_summed_over_durations["P"], columns=[name]
         )
+        baseline_hazard.index.name = None
         return baseline_hazard
 
     def _compute_baseline_hazards(self):
@@ -1654,7 +1689,10 @@ the following on the original dataset, df: `df.groupby(%s).size()`. Expected is 
         return self._compute_baseline_hazard(self._predicted_partial_hazards_, name="baseline hazard")
 
     def _compute_baseline_cumulative_hazard(self):
-        return self.baseline_hazard_.cumsum()
+        cumulative = self.baseline_hazard_.cumsum()
+        if not self.strata:
+            cumulative = cumulative.rename(columns={"baseline hazard": "baseline cumulative hazard"})
+        return cumulative
 
     def _compute_baseline_survival(self):
         """
@@ -1675,8 +1713,8 @@ the following on the original dataset, df: `df.groupby(%s).size()`. Expected is 
         >>> kmf.plot(ax=ax)
         """
         survival_df = np.exp(-self.baseline_cumulative_hazard_)
-        if self.strata is None:
-            survival_df.columns = ["baseline survival"]
+        if not self.strata:
+            survival_df = survival_df.rename(columns={"baseline cumulative hazard": "baseline survival"})
         return survival_df
 
     def plot(self, columns=None, hazard_ratios=False, **errorbar_kwargs):
@@ -1757,7 +1795,7 @@ the following on the original dataset, df: `df.groupby(%s).size()`. Expected is 
 
     def plot_covariate_groups(self, covariates, values, plot_baseline=True, **kwargs):
         """
-        Produces a visual representation comparing the baseline survival curve of the model versus
+        Produces a plot comparing the baseline survival curve of the model versus
         what happens when a covariate(s) is varied over values in a group. This is useful to compare
         subjects' survival as we vary covariate(s), all else being held equal. The baseline survival
         curve is equal to the predicted survival curve at all average values in the original dataset.
@@ -1767,7 +1805,7 @@ the following on the original dataset, df: `df.groupby(%s).size()`. Expected is 
         covariates: string or list
             a string (or list of strings) of the covariate(s) in the original dataset that we wish to vary.
         values: 1d or 2d iterable
-            an iterable of the values we wish the covariate(s) to take on.
+            an iterable of the specific values we wish the covariate(s) to take on.
         plot_baseline: bool
             also display the baseline survival, defined as the survival at the mean of the original dataset.
         kwargs:
@@ -1784,7 +1822,10 @@ the following on the original dataset, df: `df.groupby(%s).size()`. Expected is 
         >>> from lifelines import datasets, CoxPHFitter
         >>> rossi = datasets.load_rossi()
         >>> cph = CoxPHFitter().fit(rossi, 'week', 'arrest')
-        >>> cph.plot_covariate_groups('prio', values=np.arange(0, 15), cmap='coolwarm')
+        >>> cph.plot_covariate_groups('prio', values=np.arange(0, 15, 3), cmap='coolwarm')
+
+        .. image:: images/plot_covariate_example1.png
+
 
         >>> # multiple variables at once
         >>> cph.plot_covariate_groups(['prio', 'paro'], values=[
@@ -1795,17 +1836,23 @@ the following on the original dataset, df: `df.groupby(%s).size()`. Expected is 
         >>>  [5,  1],
         >>>  [10, 1]
         >>> ], cmap='coolwarm')
-        >>>
 
-        >>> # if you have categorical variables, you can simply things:
+        .. image:: images/plot_covariate_example2.png
+
+
+        >>> # if you have categorical variables, you can do the following to see the
+        >>> # effect of all the categories on one plot.
+        >>> cph.plot_covariate_groups(['dummy1', 'dummy2', 'dummy3'], values=[[1, 0, 0], [0, 1, 0], [0, 0, 1]])
+        >>> # same as:
         >>> cph.plot_covariate_groups(['dummy1', 'dummy2', 'dummy3'], values=np.eye(3))
+
 
         """
         from matplotlib import pyplot as plt
 
         covariates = _to_list(covariates)
         n_covariates = len(covariates)
-        values = _to_array(values)
+        values = np.asarray(values)
         if len(values.shape) == 1:
             values = values[None, :].T
 

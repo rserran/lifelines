@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 import autograd.numpy as np
-from autograd.numpy import exp, abs, log
+from autograd.numpy import exp, log
 from scipy.special import gammainccinv, gammaincinv
 from autograd_gamma import gammaincc, gammainc, gammaln, gammainccln, gammaincln
 from lifelines.fitters import KnownModelParametericUnivariateFitter
-from lifelines.utils import coalesce, CensoringType
+from lifelines.utils import CensoringType
 from lifelines.utils.safe_exp import safe_exp
 
 
@@ -101,7 +101,7 @@ class GeneralizedGammaFitter(KnownModelParametericUnivariateFitter):
     _bounds = [(None, None), (None, None), (None, None)]
     _compare_to_values = np.array([0, 0, 1])
 
-    def _get_initial_values(self, Ts, E, *args):
+    def _create_initial_point(self, Ts, E, *args):
         if CensoringType.is_right_censoring(self):
             log_data = log(Ts[0])
         elif CensoringType.is_left_censoring(self):

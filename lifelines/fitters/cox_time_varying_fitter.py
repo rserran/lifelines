@@ -39,11 +39,13 @@ from lifelines.utils import (
     format_exp_floats,
     format_floats,
     coalesce,
+    leading_space,
+    map_leading_space,
 )
 
 __all__ = ["CoxTimeVaryingFitter"]
 
-matrix_axis_0_sum_to_array = lambda m: np.sum(m, 0)
+matrix_axis_0_sum_to_1d_array = lambda m: np.sum(m, 0)
 
 
 class CoxTimeVaryingFitter(BaseFitter):
@@ -77,8 +79,6 @@ class CoxTimeVaryingFitter(BaseFitter):
         the strata provided
     standard_errors_: Series
         the standard errors of the estimates
-    score_: float
-        the concordance index of the model.
     baseline_cumulative_hazard_: DataFrame
     baseline_survival_: DataFrame
     """
@@ -515,7 +515,7 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
 
             # Calculate sums of Risk set
             risk_phi = array_sum_to_scalar(phi_i)
-            risk_phi_x = matrix_axis_0_sum_to_array(phi_x_i)
+            risk_phi_x = matrix_axis_0_sum_to_1d_array(phi_x_i)
             risk_phi_x_x = phi_x_x_i
 
             # Calculate the sums of Tie set
@@ -525,7 +525,7 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
 
             xi_deaths = X_at_t[deaths]
 
-            x_death_sum = matrix_axis_0_sum_to_array(weights_at_t[deaths, None] * xi_deaths)
+            x_death_sum = matrix_axis_0_sum_to_1d_array(weights_at_t[deaths, None] * xi_deaths)
 
             weight_count = array_sum_to_scalar(weights_at_t[deaths])
             weighted_average = weight_count / tied_death_counts
@@ -545,7 +545,7 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
                 # https://github.com/CamDavidsonPilon/lifelines/blob/e7056e7817272eb5dff5983556954f56c33301b1/lifelines/fitters/cox_time_varying_fitter.py#L458-L490
 
                 tie_phi = array_sum_to_scalar(phi_i[deaths])
-                tie_phi_x = matrix_axis_0_sum_to_array(phi_x_i[deaths])
+                tie_phi_x = matrix_axis_0_sum_to_1d_array(phi_x_i[deaths])
                 tie_phi_x_x = np.dot(xi_deaths.T, phi_i[deaths, None] * xi_deaths)
 
                 increasing_proportion = np.arange(tied_death_counts) / tied_death_counts
@@ -671,32 +671,35 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
         print("---")
 
         df = self.summary
+        df.columns = map_leading_space(df.columns)
 
         print(
             df.to_string(
                 float_format=format_floats(decimals),
                 formatters={
-                    "exp(coef)": format_exp_floats(decimals),
-                    "exp(coef) lower 95%": format_exp_floats(decimals),
-                    "exp(coef) upper 95%": format_exp_floats(decimals),
+                    leading_space("exp(coef)"): format_exp_floats(decimals),
+                    leading_space("exp(coef) lower 95%"): format_exp_floats(decimals),
+                    leading_space("exp(coef) upper 95%"): format_exp_floats(decimals),
                 },
-                columns=[
-                    "coef",
-                    "exp(coef)",
-                    "se(coef)",
-                    "coef lower 95%",
-                    "coef upper 95%",
-                    "exp(coef) lower 95%",
-                    "exp(coef) upper 95%",
-                ],
+                columns=map_leading_space(
+                    [
+                        "coef",
+                        "exp(coef)",
+                        "se(coef)",
+                        "coef lower 95%",
+                        "coef upper 95%",
+                        "exp(coef) lower 95%",
+                        "exp(coef) upper 95%",
+                    ]
+                ),
             )
         )
         print()
         print(
             df.to_string(
                 float_format=format_floats(decimals),
-                formatters={"p": format_p_value(decimals)},
-                columns=["z", "p", "-log2(p)"],
+                formatters={leading_space("p"): format_p_value(decimals)},
+                columns=map_leading_space(["z", "p", "-log2(p)"]),
             )
         )
 

@@ -3,7 +3,7 @@ from autograd import numpy as np
 from scipy.special import gamma
 import pandas as pd
 
-from lifelines.utils import _get_index, coalesce
+from lifelines.utils import _get_index
 from lifelines.fitters import ParametericAFTRegressionFitter
 from lifelines.utils.safe_exp import safe_exp
 
@@ -62,6 +62,10 @@ class WeibullAFTFitter(ParametericAFTRegressionFitter):
     score_: float
         the concordance index of the model.
     """
+
+    # about 25% faster than BFGS
+    _scipy_fit_method = "SLSQP"
+    _scipy_fit_options = {"ftol": 1e-10, "maxiter": 200}
 
     def __init__(self, alpha=0.05, penalizer=0.0, l1_ratio=0.0, fit_intercept=True, model_ancillary=False):
         self._ancillary_parameter_name = "rho_"

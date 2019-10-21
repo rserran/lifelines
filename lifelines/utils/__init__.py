@@ -10,15 +10,17 @@ from textwrap import dedent
 import numpy as np
 from scipy.linalg import solve
 from scipy import stats
+from scipy.integrate import quad, trapz
 import pandas as pd
 
 from lifelines.utils.concordance import concordance_index
 
 
 __all__ = [
-    "qth_survival_times",
     "qth_survival_time",
+    "restricted_mean_survival_time",
     "median_survival_times",
+    "qth_survival_times",
     "survival_table_from_events",
     "group_survival_table_from_events",
     "survival_events_from_table",
@@ -77,6 +79,15 @@ class CensoringType:
     def is_interval_censoring(cls, model):
         return model._censoring_type == cls.INTERVAL
 
+    @classmethod
+    def get_human_readable_censoring_type(cls, model):
+        if cls.is_interval_censoring(model):
+            return "interval"
+        elif cls.is_right_censoring(model):
+            return "right"
+        else:
+            return left
+
 
 class StatError(Exception):
     pass
@@ -97,7 +108,11 @@ class StatisticalWarning(RuntimeWarning):
     pass
 
 
-def qth_survival_times(q, survival_functions, cdf=False):
+class ApproximationWarning(RuntimeWarning):
+    pass
+
+
+def qth_survival_times(q, survival_functions):
     """
     Find the times when one or more survival functions reach the qth percentile.
 
@@ -108,8 +123,6 @@ def qth_survival_times(q, survival_functions, cdf=False):
     survival_functions: a (n,d) DataFrame or numpy array.
       If DataFrame, will return index values (actual times)
       If numpy array, will return indices.
-    cdf: boolean, optional
-      When doing left-censored data, cdf=True is used.
 
     Returns
     -------
@@ -122,7 +135,7 @@ def qth_survival_times(q, survival_functions, cdf=False):
     qth_survival_time, median_survival_times
     """
     # pylint: disable=cell-var-from-loop,misplaced-comparison-constant,no-else-return
-    q = _to_array(q)
+    q = _to_1d_array(q)
     q = pd.Series(q.reshape(q.size), dtype=float)
 
     if not ((q <= 1).all() and (0 <= q).all()):
@@ -135,9 +148,9 @@ def qth_survival_times(q, survival_functions, cdf=False):
         # If you add print statements to `qth_survival_time`, you'll see it's called
         # once too many times. This is expected Pandas behavior
         # https://stackoverflow.com/questions/21635915/why-does-pandas-apply-calculate-twice
-        return survival_functions.apply(lambda s: qth_survival_time(q, s, cdf=cdf)).iloc[0]
+        return survival_functions.apply(lambda s: qth_survival_time(q, s)).iloc[0]
     else:
-        d = {_q: survival_functions.apply(lambda s: qth_survival_time(_q, s, cdf=cdf)) for _q in q}
+        d = {_q: survival_functions.apply(lambda s: qth_survival_time(_q, s)) for _q in q}
         survival_times = pd.DataFrame(d).T
 
         #  Typically, one would expect that the output should equal the "height" of q.
@@ -149,17 +162,17 @@ def qth_survival_times(q, survival_functions, cdf=False):
         return survival_times
 
 
-def qth_survival_time(q, survival_function, cdf=False):
+def qth_survival_time(q, model_or_survival_function):
     """
-    Returns the time when a single survival function reaches the qth percentile.
+    Returns the time when a single survival function reaches the qth percentile, that is,
+    solves  :math:`q = S(t)` for :math:`t`.
 
     Parameters
     ----------
     q: float
-      a float between 0 and 1 that represents the time when the survival function hit's the qth percentile.
-    survival_function: Series or single-column DataFrame.
-    cdf: boolean, optional
-      When doing left-censored data, cdf=True is used.
+      value between 0 and 1.
+    model_or_survival_function: Pandas Series or single-column DataFrame, or lifelines model
+
 
     Returns
     -------
@@ -169,26 +182,107 @@ def qth_survival_time(q, survival_function, cdf=False):
     --------
     qth_survival_times, median_survival_times
     """
-    if type(survival_function) is pd.DataFrame:  # pylint: disable=unidiomatic-typecheck
-        if survival_function.shape[1] > 1:
-            raise ValueError(
-                "Expecting a dataframe (or series) with a single column. Provide that or use utils.qth_survival_times."
-            )
+    import lifelines
 
-        survival_function = survival_function.T.squeeze()
-    if cdf:
-        if survival_function.iloc[0] > q:
-            return -np.inf
-        v = survival_function.index[survival_function.searchsorted([q])[0]]
-    else:
-        if survival_function.iloc[-1] > q:
+    if isinstance(model_or_survival_function, lifelines.fitters.UnivariateFitter):
+        return model.percentile(q)
+    elif isinstance(model_or_survival_function, pd.DataFrame):
+        if model_or_survival_function.shape[1] > 1:
+            raise ValueError(
+                "Expecting a DataFrame (or Series) with a single column. Provide that or use utils.qth_survival_times."
+            )
+        return qth_survival_time(q, model_or_survival_function.T.squeeze())
+    elif isinstance(model_or_survival_function, pd.Series):
+        if model_or_survival_function.iloc[-1] > q:
             return np.inf
-        v = survival_function.index[(-survival_function).searchsorted([-q])[0]]
+        v = model_or_survival_function.index[(-model_or_survival_function).searchsorted([-q])[0]]
+    else:
+        raise ValueError(
+            "Unable to compute median of object %s - should be a DataFrame, Series or lifelines univariate model"
+            % model_or_survival_function
+        )
     return v
 
 
-def median_survival_times(density_or_survival_function, left_censorship=False):
-    return qth_survival_times(0.5, density_or_survival_function, cdf=left_censorship)
+def median_survival_times(model_or_survival_function):
+    """
+    Compute the median survival time of survival function(s).
+
+    Parameters
+    -----------
+
+    model_or_survival_function: lifelines model or DataFrame
+        This can be a univariate lifelines model, or a DataFrame of one or more survival functions.
+    """
+    import lifelines
+
+    if isinstance(model_or_survival_function, pd.DataFrame):
+        return qth_survival_times(0.5, model_or_survival_function)
+    elif isinstance(model_or_survival_function, lifelines.fitters.UnivariateFitter):
+        return model.median_survival_time_
+    else:
+        raise ValueError("Can't compute median survival time of object %s" % model_or_survival_function)
+
+
+def restricted_mean_survival_time(model_or_survival_function, t=np.inf, return_ci=False):
+    r"""
+    Compute the restricted mean survival time, RMST, of a survival function. This is defined as
+
+    .. math::  \text{RMST}(t) = \int_0^t S(\tau) d\tau
+
+    For reason why we use an upper bound and not always :math:`\infty` is because the tail of a survival
+    function has high variance and strongly effects the RMST.
+
+    Parameters
+    -----------
+
+    model_or_survival_function: lifelines model or DataFrame
+        This can be a univariate model, or a pandas DataFrame. The former will provide a more accurate estimate however.
+    t: float
+        The upper limit of the integration in the RMST.
+
+    Example
+    --------
+
+    >>> from lifelines import KaplanMeierFitter, WeibullFitter
+    >>> from lifelines.utils import restricted_mean_survival_time
+    >>>
+    >>> kmf = KaplanMeierFitter().fit(T, E)
+    >>> restricted_mean_survival_time(kmf, t=3.5)
+    >>> restricted_mean_survival_time(kmf.survival_function_, t=3.5)
+    >>>
+    >>> wf = WeibullFitter().fit(T, E)
+    >>> restricted_mean_survival_time(wf)
+    >>> restricted_mean_survival_time(wf.survival_function_)
+
+    References
+    -------
+    https://bmcmedresmethodol.biomedcentral.com/articles/10.1186/1471-2288-13-152#Sec27
+
+    """
+    import lifelines
+
+    if isinstance(model_or_survival_function, pd.DataFrame):
+        warnings.warn(
+            "Approximating RMST using the precomputed survival function. You likely will get a more accurate estimate if you provide the fitted Model instead of the survival function.",
+            ApproximationWarning,
+        )
+        sf = model_or_survival_function.loc[:t]
+        sf = sf.append(pd.DataFrame([1], index=[0], columns=sf.columns)).sort_index()
+        return trapz(y=sf.values[:, 0], x=sf.index)
+    elif isinstance(model_or_survival_function, lifelines.fitters.UnivariateFitter):
+        # lifelines model
+        model = model_or_survival_function
+        # if KM, we can compute exactly
+        if isinstance(model, lifelines.KaplanMeierFitter):
+            sf = model.survival_function_.loc[:t]
+            sf = sf.append(pd.DataFrame([model.predict(t)], index=[t], columns=sf.columns)).sort_index()
+            sf = sf.reset_index()
+            return (sf["index"].diff().shift(-1) * sf[model._label]).sum()
+        else:
+            return quad(model.survival_function_at_times, 0, t)[0]
+    else:
+        raise ValueError("Can't compute RMST of object %s" % model_or_survival_function)
 
 
 def group_survival_table_from_events(
@@ -311,6 +405,8 @@ def survival_table_from_events(
     intervals=None,
 ):  # pylint: disable=dangerous-default-value,too-many-locals
     """
+    Create a survival table from right-censored dataset.
+
     Parameters
     ----------
     death_times: (n,) array
@@ -355,7 +451,6 @@ def survival_table_from_events(
     >>> 15              2         2         0         0         2
     >>> #Collapsed output
     >>>          removed observed censored at_risk
-    >>>              sum      sum      sum     max
     >>> event_at
     >>> (0, 2]        34       33        1     312
     >>> (2, 4]        84       42       42     278
@@ -466,6 +561,10 @@ def survival_events_from_table(survival_table, observed_deaths_col="observed", c
     >>> E = np.array([ 1.,  0.,  1.,  1.,  0.,  0.])
     >>> W = np.array([ 1,  1,  1,  1,  1,  1])
 
+    See Also
+    --------
+    ``survival_table_from_events``
+
     """
     T_ = []
     E_ = []
@@ -541,7 +640,7 @@ def datetimes_to_durations(
 
     T = (end_times_ - start_times_).values.astype(freq_string).astype(float)
     if (T < 0).sum():
-        warnings.warn("Warning: some values of start_times are after end_times")
+        warnings.warn("Warning: some values of start_times are after end_times", UserWarning)
     return T, C.values
 
 
@@ -771,6 +870,10 @@ def _preprocess_inputs(durations, event_observed, timeline, entry, weights):
     n = len(durations)
     durations = np.asarray(pass_for_numeric_dtypes_or_raise_array(durations)).reshape((n,))
 
+    if weights is None:
+        weights = np.ones_like(durations)
+    weights = np.asarray(weights).reshape((n,))
+
     # set to all observed if event_observed is none
     if event_observed is None:
         event_observed = np.ones(n, dtype=int)
@@ -786,7 +889,7 @@ def _preprocess_inputs(durations, event_observed, timeline, entry, weights):
     else:
         timeline = np.asarray(timeline)
 
-    return (durations, event_observed, timeline.astype(float), entry, event_table)
+    return durations, event_observed, timeline.astype(float), entry, event_table, weights
 
 
 def _get_index(X):
@@ -1006,7 +1109,7 @@ def check_nans_or_infs(df_or_array):
             """Attempting to convert an unexpected datatype '%s' to float. Suggestion: 1) use `lifelines.utils.datetimes_to_durations` to do conversions or 2) manually convert to floats/booleans."""
             % df_or_array.dtype
         )
-        warnings.warn(warning_text)
+        warnings.warn(warning_text, UserWarning)
         try:
             infs = np.isinf(df_or_array.astype(float))
         except:
@@ -1398,10 +1501,14 @@ class StepSizer:
         return self.step_size
 
 
-def _to_array(x):
-    if not isinstance(x, collections.abc.Iterable):
-        return np.array([x])
-    return np.asarray(x)
+def _to_1d_array(x):
+    v = np.atleast_1d(x)
+    try:
+        if v.shape[0] > 1 and v.shape[1] > 1:
+            raise ValueError("Wrong shape (2d) given to _to_1d_array")
+    except IndexError:
+        pass
+    return v
 
 
 def _to_list(x):
@@ -1435,8 +1542,43 @@ def format_floats(decimals):
     return lambda f: "{:4.{prec}f}".format(f, prec=decimals)
 
 
-def dataframe_interpolate_at_times(df, times):
-    return df.reindex(df.index.union(_to_array(times))).interpolate(method="index").loc[times].squeeze()
+def leading_space(s):
+    return " %s" % s
+
+
+def map_leading_space(list):
+    return [leading_space(c) for c in list]
+
+
+def interpolate_at_times(df_or_series, new_times):
+    """
+
+
+    Parameters
+    -----------
+    df_or_series: Pandas DataFrame or Series
+    new_times: iterable, numpy array
+         can be a n-d array, list.
+
+    """
+
+    assert df_or_series.index.is_monotonic_increasing, "df_or_series must be a increasing index."
+    t = df_or_series.index.values
+    y = df_or_series.values.reshape(df_or_series.shape[0])
+    return np.interp(new_times, t, y)
+
+
+def interpolate_at_times_and_return_pandas(df_or_series, new_times):
+    """
+    TODO
+    """
+    new_times = _to_1d_array(new_times)
+    try:
+        cols = df_or_series.columns
+    except AttributeError:
+        cols = None
+
+    return pd.DataFrame(interpolate_at_times(df_or_series, new_times), index=new_times, columns=cols).squeeze()
 
 
 string_justify = lambda width: lambda s: s.rjust(width, " ")
@@ -1469,7 +1611,7 @@ class DataframeSliceDict:
             yield (k, self[k])
 
     def filter(self, ix):
-        ix = _to_array(ix)
+        ix = _to_1d_array(ix)
         return DataframeSliceDict(self.df[ix], self.mappings)
 
     def iterdicts(self):

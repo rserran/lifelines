@@ -7,6 +7,23 @@ from lifelines.utils.safe_exp import safe_exp
 
 
 class PiecewiseExponentialRegressionFitter(ParametricRegressionFitter):
+    """
+    TODO: docs
+
+
+
+    Examples
+    ----------
+
+    See blog post <here https://dataorigami.net/blogs/napkin-folding/churn>_.
+
+
+    """
+
+    # about 50% faster than BFGS
+    _scipy_fit_method = "SLSQP"
+    _scipy_fit_options = {"ftol": 1e-6, "maxiter": 200}
+
     def __init__(self, breakpoints, alpha=0.05, penalizer=0.0):
         super(PiecewiseExponentialRegressionFitter, self).__init__(alpha=alpha)
 
@@ -28,8 +45,9 @@ class PiecewiseExponentialRegressionFitter(ParametricRegressionFitter):
         coef_penalty = 0
 
         if self.penalizer > 0:
-            for i in range(params_stacked.shape[1] - 1):  # assuming the intercept col is the last column...
-                coef_penalty = coef_penalty + (params_stacked[:, i]).var()
+            for i in range(params_stacked.shape[1]):
+                if not self._constant_cols[i]:
+                    coef_penalty = coef_penalty + (params_stacked[:, i]).var()
 
         return neg_ll + self.penalizer * coef_penalty
 
@@ -75,10 +93,13 @@ class PiecewiseExponentialRegressionFitter(ParametricRegressionFitter):
             the cumulative hazard of individuals over the timeline
         """
 
+        if isinstance(df, pd.Series):
+            return self.predict_cumulative_hazard(df.to_frame().T)
+
         if conditional_after is not None:
             raise NotImplementedError()
 
-        times = np.asarray(coalesce(times, self.timeline, np.unique(self.durations)))
+        times = np.atleast_1d(coalesce(times, self.timeline, np.unique(self.durations))).astype(float)
         n = times.shape[0]
         times = times.reshape((n, 1))
 
