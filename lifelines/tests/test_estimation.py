@@ -18,7 +18,10 @@ from scipy.stats import weibull_min, norm, logistic, invweibull, invgamma
 from autograd.scipy.special import expit
 from autograd import numpy as anp
 
-from flaky import flaky
+try:
+    from flaky import flaky
+except ImportError:
+    pass
 
 from pandas.util.testing import assert_frame_equal, assert_series_equal, assert_index_equal
 import numpy.testing as npt
@@ -214,7 +217,7 @@ class TestParametricUnivariateFitters:
                 c, mu_ = params
                 return c * norm.cdf((times - mu_) / 6.3, loc=0, scale=1)
 
-        uaf = UpperAsymptoteFitter().fit(T, E, ci_labels=("u", "l"))
+        uaf = UpperAsymptoteFitter().fit(T, E, ci_labels=("l", "u"))
         upper = uaf.confidence_interval_.iloc[-1]["u"]
         lower = uaf.confidence_interval_.iloc[-1]["l"]
         coef, std = uaf.summary.loc["c_", ["coef", "se(coef)"]]
@@ -324,6 +327,16 @@ class TestUnivariateFitters:
             PiecewiseExponentialFitterTesting,
             GeneralizedGammaFitter,
         ]
+
+    def test_confidence_interval_has_the_correct_order_so_plotting_doesnt_break(
+        self, sample_lifetimes, univariate_fitters
+    ):
+        T, E = sample_lifetimes
+        for f in univariate_fitters:
+            f = f()
+            f.fit(T, E)
+            assert "lower" in f.confidence_interval_.columns[0]
+            assert "upper" in f.confidence_interval_.columns[1]
 
     def test_repr_with_fitter(self, sample_lifetimes, univariate_fitters):
         T, E = sample_lifetimes
@@ -483,8 +496,8 @@ class TestUnivariateFitters:
             fitter = f()
             fitter.fit(positive_sample_lifetimes[0], label=label)
             assert fitter._label == label
-            assert fitter.confidence_interval_.columns[0] == "%s_upper_0.95" % label
-            assert fitter.confidence_interval_.columns[1] == "%s_lower_0.95" % label
+            assert fitter.confidence_interval_.columns[0] == "%s_lower_0.95" % label
+            assert fitter.confidence_interval_.columns[1] == "%s_upper_0.95" % label
 
     def test_ci_labels(self, positive_sample_lifetimes, univariate_fitters):
         expected = ["upper", "lower"]

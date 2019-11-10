@@ -1,15 +1,26 @@
 ## Changelog
 
+#### 0.22.10
 
-#### 0.22.9 - unreleased
+The tests were re-factored to be shipped with the package. Let me know if this causes problems.
+
+
+##### Bug fixes
+ - fixed error in plotting models with "lower" or "upper" was in the label name.
+ - fixed bug in plot_covariate_groups for AFT models when >1d arrays were used for values arg.
+
+
+#### 0.22.9 - 2019-10-30
 
 
 ##### Bug fixes
  - fixed `predict_` methods in AFT models when `timeline` was not specified.
+ - fixed error in `qq_plot`
+ - fixed error when submitting a model in `qth_survival_time`
+ - `CoxPHFitter` now displays correct columns values when changing alpha param.
 
 
-
-#### 0.22.8
+#### 0.22.8 - 2019-10-06
 
 ##### New features
  - Serializing lifelines is better supported. Packages like joblib and pickle are now supported. Thanks @AbdealiJK!

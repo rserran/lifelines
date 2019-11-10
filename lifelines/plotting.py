@@ -4,6 +4,8 @@ import warnings
 import numpy as np
 from lifelines.utils import coalesce, CensoringType
 from scipy import stats
+from matplotlib import pyplot as plt
+
 
 __all__ = ["add_at_risk_counts", "plot_lifetimes", "qq_plot", "cdf_plot"]
 
@@ -45,11 +47,11 @@ def create_scipy_stats_model_from_lifelines_model(model):
     return getattr(stats, scipy_dist)(*sparams)
 
 
-def cdf_plot(model, timeline=None, **plot_kwargs):
+def cdf_plot(model, timeline=None, ax=None, **plot_kwargs):
     from lifelines import KaplanMeierFitter
 
-    set_kwargs_ax(plot_kwargs)
-    ax = plot_kwargs.pop("ax")
+    if ax is None:
+        ax = plt.gca()
 
     if timeline is None:
         timeline = model.timeline
@@ -76,7 +78,7 @@ def cdf_plot(model, timeline=None, **plot_kwargs):
     return ax
 
 
-def qq_plot(model, **plot_kwargs):
+def qq_plot(model, ax=None, **plot_kwargs):
     """
     Produces a quantile-quantile plot of the empirical CDF against
     the fitted parametric CDF. Large deviances away from the line y=x
@@ -109,8 +111,8 @@ def qq_plot(model, **plot_kwargs):
     from lifelines.utils import qth_survival_times
     from lifelines import KaplanMeierFitter
 
-    set_kwargs_ax(plot_kwargs)
-    ax = plot_kwargs.pop("ax")
+    if ax is None:
+        ax = plt.gca()
 
     dist = get_distribution_name_of_lifelines_model(model)
     dist_object = create_scipy_stats_model_from_lifelines_model(model)
@@ -126,7 +128,8 @@ def qq_plot(model, **plot_kwargs):
         raise NotImplementedError()
 
     q = np.unique(kmf.cumulative_density_.values[:, 0])
-    quantiles = qth_survival_times(q, kmf.cumulative_density_, cdf=True)
+    # this is equivalent to the old code `qth_survival_times(q, kmf.cumulative_density, cdf=True)`
+    quantiles = qth_survival_times(1 - q, kmf.survival_function_)
     quantiles[COL_THEO] = dist_object.ppf(q)
     quantiles = quantiles.replace([-np.inf, 0, np.inf], np.nan).dropna()
 
@@ -245,8 +248,6 @@ def add_at_risk_counts(*fitters, **kwargs):
     >>> # This hides the labels
     >>> add_at_risk_counts(f1, f2, labels=None)
     """
-    from matplotlib import pyplot as plt
-
     # Axes and Figure can't be None
     ax = kwargs.pop("ax", None)
     if ax is None:
@@ -322,6 +323,7 @@ def plot_lifetimes(
     sort_by_duration=True,
     event_observed_color="#A60628",
     event_censored_color="#348ABD",
+    ax=None,
     **kwargs
 ):
     """
@@ -356,8 +358,8 @@ def plot_lifetimes(
     >>> ax = plot_lifetimes(T.loc[:50], event_observed=E.loc[:50])
 
     """
-    set_kwargs_ax(kwargs)
-    ax = kwargs.pop("ax")
+    if ax is None:
+        ax = plt.gca()
 
     N = durations.shape[0]
     if N > 80:
@@ -391,13 +393,6 @@ def plot_lifetimes(
     return ax
 
 
-def set_kwargs_ax(kwargs):
-    from matplotlib import pyplot as plt
-
-    if "ax" not in kwargs:
-        kwargs["ax"] = plt.figure().add_subplot(111)
-
-
 def set_kwargs_color(kwargs):
     kwargs["c"] = coalesce(kwargs.get("c"), kwargs.get("color"), kwargs["ax"]._get_lines.get_next_color())
 
@@ -423,7 +418,7 @@ def create_dataframe_slicer(iloc, loc, timeline):
     return lambda df: getattr(df, get_method)[user_submitted_slice]
 
 
-def plot_loglogs(cls, loc=None, iloc=None, show_censors=False, censor_styles=None, **kwargs):
+def plot_loglogs(cls, loc=None, iloc=None, show_censors=False, censor_styles=None, ax=None, **kwargs):
     """
     Specifies a plot of the log(-log(SV)) versus log(time) where SV is the estimated survival function.
     """
@@ -437,7 +432,10 @@ def plot_loglogs(cls, loc=None, iloc=None, show_censors=False, censor_styles=Non
     if censor_styles is None:
         censor_styles = {}
 
-    set_kwargs_ax(kwargs)
+    if ax is None:
+        ax = plt.gca()
+
+    kwargs["ax"] = ax
     set_kwargs_color(kwargs)
     set_kwargs_drawstyle(kwargs)
     kwargs["logx"] = True
@@ -445,7 +443,6 @@ def plot_loglogs(cls, loc=None, iloc=None, show_censors=False, censor_styles=Non
     dataframe_slicer = create_dataframe_slicer(iloc, loc, cls.timeline)
 
     # plot censors
-    ax = kwargs["ax"]
     colour = kwargs["c"]
 
     if show_censors and cls.event_table["censored"].sum() > 0:
@@ -475,6 +472,7 @@ def _plot_estimate(
     ci_alpha=0.25,
     ci_show=True,
     at_risk_counts=False,
+    ax=None,
     **kwargs
 ):
 
@@ -517,7 +515,8 @@ def _plot_estimate(
     ax:
         a pyplot axis object
     """
-    plot_estimate_config = PlotEstimateConfig(cls, estimate, loc, iloc, show_censors, censor_styles, **kwargs)
+
+    plot_estimate_config = PlotEstimateConfig(cls, estimate, loc, iloc, show_censors, censor_styles, ax, **kwargs)
 
     dataframe_slicer = create_dataframe_slicer(iloc, loc, cls.timeline)
 
@@ -547,8 +546,8 @@ def _plot_estimate(
             )
         else:
             x = dataframe_slicer(plot_estimate_config.confidence_interval_).index.values.astype(float)
-            lower = dataframe_slicer(plot_estimate_config.confidence_interval_.filter(like="lower")).values[:, 0]
-            upper = dataframe_slicer(plot_estimate_config.confidence_interval_.filter(like="upper")).values[:, 0]
+            lower = dataframe_slicer(plot_estimate_config.confidence_interval_.iloc[:, [0]]).values[:, 0]
+            upper = dataframe_slicer(plot_estimate_config.confidence_interval_.iloc[:, [1]]).values[:, 0]
 
             if plot_estimate_config.kwargs["drawstyle"] == "default":
                 step = None
@@ -566,11 +565,14 @@ def _plot_estimate(
 
 
 class PlotEstimateConfig:
-    def __init__(self, cls, estimate, loc, iloc, show_censors, censor_styles, **kwargs):
+    def __init__(self, cls, estimate, loc, iloc, show_censors, censor_styles, ax, **kwargs):
 
         self.censor_styles = coalesce(censor_styles, {})
 
-        set_kwargs_ax(kwargs)
+        if ax is None:
+            ax = plt.gca()
+
+        kwargs["ax"] = ax
         set_kwargs_color(kwargs)
         set_kwargs_drawstyle(kwargs)
         set_kwargs_label(kwargs, cls)
@@ -579,7 +581,7 @@ class PlotEstimateConfig:
         self.iloc = iloc
         self.show_censors = show_censors
         # plot censors
-        self.ax = kwargs["ax"]
+        self.ax = ax
         self.colour = kwargs["c"]
         self.kwargs = kwargs
 

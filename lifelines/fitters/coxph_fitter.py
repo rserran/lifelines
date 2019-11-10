@@ -12,7 +12,7 @@ from scipy.integrate import trapz
 from scipy import stats
 
 from lifelines.fitters import BaseFitter
-from lifelines.plotting import set_kwargs_ax, set_kwargs_drawstyle
+from lifelines.plotting import set_kwargs_drawstyle
 from lifelines.statistics import chisq_test, proportional_hazard_test, TimeTransformers, StatisticalResult
 from lifelines.utils.lowess import lowess
 from lifelines.utils.concordance import _concordance_summary_statistics, _concordance_ratio
@@ -1717,7 +1717,7 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
             survival_df = survival_df.rename(columns={"baseline cumulative hazard": "baseline survival"})
         return survival_df
 
-    def plot(self, columns=None, hazard_ratios=False, **errorbar_kwargs):
+    def plot(self, columns=None, hazard_ratios=False, ax=None, **errorbar_kwargs):
         """
         Produces a visual representation of the coefficients (i.e. log hazard ratios), including their standard errors and magnitudes.
 
@@ -1746,8 +1746,9 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
         """
         from matplotlib import pyplot as plt
 
-        set_kwargs_ax(errorbar_kwargs)
-        ax = errorbar_kwargs.pop("ax")
+        if ax is None:
+            ax = plt.gca()
+
         errorbar_kwargs.setdefault("c", "k")
         errorbar_kwargs.setdefault("fmt", "s")
         errorbar_kwargs.setdefault("markerfacecolor", "white")
@@ -1777,11 +1778,11 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
                 xerr=np.vstack([lower_errors[order], upper_errors[order]]),
                 **errorbar_kwargs
             )
-            plt.xlabel("HR (%g%% CI)" % ((1 - self.alpha) * 100))
+            ax.set_xlabel("HR (%g%% CI)" % ((1 - self.alpha) * 100))
         else:
             symmetric_errors = z * self.standard_errors_[columns].values
             ax.errorbar(log_hazards[order], yaxis_locations, xerr=symmetric_errors[order], **errorbar_kwargs)
-            plt.xlabel("log(HR) (%g%% CI)" % ((1 - self.alpha) * 100))
+            ax.set_xlabel("log(HR) (%g%% CI)" % ((1 - self.alpha) * 100))
 
         best_ylim = ax.get_ylim()
         ax.vlines(1 if hazard_ratios else 0, -2, len(columns) + 1, linestyles="dashed", linewidths=1, alpha=0.65)
@@ -1789,7 +1790,8 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
 
         tick_labels = [columns[i] for i in order]
 
-        plt.yticks(yaxis_locations, tick_labels)
+        ax.set_yticks(yaxis_locations)
+        ax.set_yticklabels(tick_labels)
 
         return ax
 
