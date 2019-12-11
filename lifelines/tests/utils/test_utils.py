@@ -1021,7 +1021,6 @@ class TestSklearnAdapter:
         assert clf.best_params_ == {"l1_ratio": 0.5, "model_ancillary": False, "penalizer": 0.01}
         assert clf.predict(X).shape[0] == X.shape[0]
 
-    @pytest.mark.xfail
     def test_joblib(self, X, Y):
         from joblib import dump, load
 
@@ -1031,6 +1030,13 @@ class TestSklearnAdapter:
         clf.fit(X, Y)
         dump(clf, "filename.joblib")
         clf = load("filename.joblib")
+
+    @pytest.mark.xfail
+    def test_sklearn_check():
+        from sklearn.utils.estimator_checks import check_estimator
+
+        base_model = sklearn_adapter(WeibullAFTFitter, event_col="E")
+        check_estimator(base_model())
 
 
 def test_rmst_works_at_kaplan_meier_edge_case():
@@ -1071,3 +1077,18 @@ def test_rmst_approximate_solution():
             )
             < 0.001
         )
+
+
+def test_rmst_variance():
+
+    T = np.random.exponential(2, 1000)
+    expf = ExponentialFitter().fit(T)
+    hazard = 1 / expf.lambda_
+    t = 1
+
+    sq = 2 / hazard ** 2 * (1 - np.exp(-hazard * t) * (1 + hazard * t))
+    actual_mean = 1 / hazard * (1 - np.exp(-hazard * t))
+    actual_var = sq - actual_mean ** 2
+
+    assert abs(utils.restricted_mean_survival_time(expf, t=t, return_variance=True)[0] - actual_mean) < 0.001
+    assert abs(utils.restricted_mean_survival_time(expf, t=t, return_variance=True)[1] - actual_var) < 0.001

@@ -16,7 +16,8 @@ from scipy.linalg import solve as spsolve, LinAlgError
 from numpy import sum as array_sum_to_scalar
 
 from lifelines.fitters import BaseFitter
-from lifelines.statistics import chisq_test, StatisticalResult
+from lifelines.utils.printer import Printer
+from lifelines.statistics import _chisq_test_p_value, StatisticalResult
 from lifelines.utils import (
     _get_index,
     _to_list,
@@ -35,12 +36,7 @@ from lifelines.utils import (
     StepSizer,
     check_nans_or_infs,
     string_justify,
-    format_p_value,
-    format_exp_floats,
-    format_floats,
     coalesce,
-    leading_space,
-    map_leading_space,
 )
 
 __all__ = ["CoxTimeVaryingFitter"]
@@ -82,6 +78,8 @@ class CoxTimeVaryingFitter(BaseFitter):
     baseline_cumulative_hazard_: DataFrame
     baseline_survival_: DataFrame
     """
+
+    _KNOWN_MODEL = True
 
     def __init__(self, alpha=0.05, penalizer=0.0, strata=None):
         super(CoxTimeVaryingFitter, self).__init__(alpha=alpha)
@@ -161,7 +159,7 @@ class CoxTimeVaryingFitter(BaseFitter):
         self.id_col = id_col
         self.stop_col = stop_col
         self.start_col = start_col
-        self._time_fit_was_called = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        self._time_fit_was_called = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S") + " UTC"
 
         df = df.copy()
 
@@ -290,7 +288,7 @@ class CoxTimeVaryingFitter(BaseFitter):
             Contains columns coef, np.exp(coef), se(coef), z, p, lower, upper"""
         ci = 100 * (1 - self.alpha)
         z = inv_normal_cdf(1 - self.alpha / 2)
-        with np.errstate(invalid="ignore", divide="ignore"):
+        with np.errstate(invalid="ignore", divide="ignore", over="ignore", under="ignore"):
             df = pd.DataFrame(index=self.params_.index)
             df["coef"] = self.params_
             df["exp(coef)"] = self.hazard_ratios_
@@ -443,7 +441,7 @@ https://lifelines.readthedocs.io/en/latest/Examples.html#problems-with-convergen
             elif abs(ll) < 0.0001 and norm_delta > 1.0:
                 warnings.warn(
                     "The log-likelihood is getting suspiciously close to 0 and the delta is still large. There may be complete separation in the dataset. This may result in incorrect inference of coefficients. \
-See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-separation-in-logistic-regression",
+See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-separation-in-logistic-regression\n",
                     ConvergenceWarning,
                 )
                 converging, completed = False, False
@@ -472,14 +470,6 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
             warnings.warn("Newton-Rhapson failed to converge sufficiently in %d steps." % max_steps, ConvergenceWarning)
 
         return beta
-
-    @property
-    def _log_likelihood(self):
-        warnings.warn(
-            "Please use `log_likelihood` property instead. `_log_likelihood` will be removed in a future version of lifelines",
-            DeprecationWarning,
-        )
-        return self.log_likelihood_
 
     def _get_gradients(self, X, events, start, stop, weights, beta):  # pylint: disable=too-many-locals
         """
@@ -536,12 +526,12 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
 
             if tied_death_counts > 1:
 
-                # A good explaination for how Efron handles ties. Consider three of five subjects who fail at the time.
+                # A good explanation for how Efron handles ties. Consider three of five subjects who fail at the time.
                 # As it is not known a priori that who is the first to fail, so one-third of
                 # (φ1 + φ2 + φ3) is adjusted from sum_j^{5} φj after one fails. Similarly two-third
                 # of (φ1 + φ2 + φ3) is adjusted after first two individuals fail, etc.
 
-                # a lot of this is now in einstien notation for performance, but see original "expanded" code here
+                # a lot of this is now in Einstein notation for performance, but see original "expanded" code here
                 # https://github.com/CamDavidsonPilon/lifelines/blob/e7056e7817272eb5dff5983556954f56c33301b1/lifelines/fitters/cox_time_varying_fitter.py#L458-L490
 
                 tie_phi = array_sum_to_scalar(phi_i[deaths])
@@ -574,7 +564,7 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
         r"""
         This is equivalent to R's linear.predictors.
         Returns the log of the partial hazard for the individuals, partial since the
-        baseline hazard is not included. Equal to :math:`(x - \bar{x})'\beta `
+        baseline hazard is not included. Equal to :math:`(x - \bar{x})'\beta`
 
 
         Parameters
@@ -629,7 +619,7 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
         """
         return np.exp(self.predict_log_partial_hazard(X))
 
-    def print_summary(self, decimals=2, **kwargs):
+    def print_summary(self, decimals=2, style=None, **kwargs):
         """
         Print summary statistics describing the fit, the coefficients, and the error bounds.
 
@@ -637,81 +627,39 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
         -----------
         decimals: int, optional (default=2)
             specify the number of decimal places to show
+        style: string
+            {html, ascii, latex}
         kwargs:
             print additional meta data in the output (useful to provide model names, dataset names, etc.) when comparing
             multiple outputs.
 
         """
-
-        # Print information about data first
         justify = string_justify(18)
 
-        print(self)
-        print("{} = '{}'".format(justify("event col"), self.event_col))
+        headers = []
 
+        if self.event_col:
+            headers.append(("event col", "'%s'" % self.event_col))
         if self.weights_col:
-            print("{} = '{}'".format(justify("weights col"), self.weights_col))
-
-        if self.strata:
-            print("{} = {}".format(justify("strata"), self.strata))
-
+            headers.append(("weights col", "'%s'" % self.weights_col))
         if self.penalizer > 0:
-            print("{} = {}".format(justify("penalizer"), self.penalizer))
+            headers.append(("penalizer", self.penalizer))
+        if self.strata:
+            headers.append(("strata", self.strata))
 
-        print("{} = {}".format(justify("number of subjects"), self._n_unique))
-        print("{} = {}".format(justify("number of periods"), self._n_examples))
-        print("{} = {}".format(justify("number of events"), self.event_observed.sum()))
-        print("{} = {:.{prec}f}".format(justify("log-likelihood"), self.log_likelihood_, prec=decimals))
-        print("{} = {} UTC".format(justify("time fit was run"), self._time_fit_was_called))
-
-        for k, v in kwargs.items():
-            print("{} = {}\n".format(justify(k), v))
-
-        print(end="\n")
-        print("---")
-
-        df = self.summary
-        df.columns = map_leading_space(df.columns)
-
-        print(
-            df.to_string(
-                float_format=format_floats(decimals),
-                formatters={
-                    leading_space("exp(coef)"): format_exp_floats(decimals),
-                    leading_space("exp(coef) lower 95%"): format_exp_floats(decimals),
-                    leading_space("exp(coef) upper 95%"): format_exp_floats(decimals),
-                },
-                columns=map_leading_space(
-                    [
-                        "coef",
-                        "exp(coef)",
-                        "se(coef)",
-                        "coef lower 95%",
-                        "coef upper 95%",
-                        "exp(coef) lower 95%",
-                        "exp(coef) upper 95%",
-                    ]
-                ),
-            )
-        )
-        print()
-        print(
-            df.to_string(
-                float_format=format_floats(decimals),
-                formatters={leading_space("p"): format_p_value(decimals)},
-                columns=map_leading_space(["z", "p", "-log2(p)"]),
-            )
+        headers.extend(
+            [
+                ("number of subjects", self._n_unique),
+                ("number of periods", self._n_examples),
+                ("number of events", self.event_observed.sum()),
+                ("partial log-likelihood", "{:.{prec}f}".format(self.log_likelihood_, prec=decimals)),
+                ("time fit was run", self._time_fit_was_called),
+            ]
         )
 
-        # Significance code explanation
-        print("---")
-        with np.errstate(invalid="ignore", divide="ignore"):
-            sr = self.log_likelihood_ratio_test()
-            print(
-                "Log-likelihood ratio test = {:.{prec}f} on {} df, -log2(p)={:.{prec}f}".format(
-                    sr.test_statistic, sr.degrees_freedom, -np.log2(sr.p_value), prec=decimals
-                )
-            )
+        p = Printer(headers, self, justify, decimals, kwargs)
+
+        p.print(style=style)
 
     def log_likelihood_ratio_test(self):
         """
@@ -746,7 +694,7 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
         ll_alt = self.log_likelihood_
         test_stat = 2 * (ll_alt - ll_null)
         degrees_freedom = self.params_.shape[0]
-        p_value = chisq_test(test_stat, degrees_freedom=degrees_freedom)
+        p_value = _chisq_test_p_value(test_stat, degrees_freedom=degrees_freedom)
         return StatisticalResult(
             p_value,
             test_stat,

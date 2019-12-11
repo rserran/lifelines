@@ -7,7 +7,7 @@ from scipy import stats
 from matplotlib import pyplot as plt
 
 
-__all__ = ["add_at_risk_counts", "plot_lifetimes", "qq_plot", "cdf_plot"]
+__all__ = ["add_at_risk_counts", "plot_lifetimes", "qq_plot", "cdf_plot", "rmst_plot", "loglogs_plot"]
 
 
 def get_distribution_name_of_lifelines_model(model):
@@ -15,9 +15,9 @@ def get_distribution_name_of_lifelines_model(model):
 
 
 def create_scipy_stats_model_from_lifelines_model(model):
-    from lifelines.fitters import KnownModelParametericUnivariateFitter
+    from lifelines.fitters import KnownModelParametricUnivariateFitter
 
-    is_univariate_model = isinstance(model, KnownModelParametericUnivariateFitter)
+    is_univariate_model = isinstance(model, KnownModelParametricUnivariateFitter)
     dist = get_distribution_name_of_lifelines_model(model)
 
     if not (is_univariate_model):
@@ -48,6 +48,10 @@ def create_scipy_stats_model_from_lifelines_model(model):
 
 
 def cdf_plot(model, timeline=None, ax=None, **plot_kwargs):
+    """
+
+
+    """
     from lifelines import KaplanMeierFitter
 
     if ax is None:
@@ -56,25 +60,131 @@ def cdf_plot(model, timeline=None, ax=None, **plot_kwargs):
     if timeline is None:
         timeline = model.timeline
 
-    COL_EMP = "empirical quantiles"
+    COL_EMP = "empirical CDF"
 
     if CensoringType.is_left_censoring(model):
-        kmf = KaplanMeierFitter().fit_left_censoring(
+        empirical_kmf = KaplanMeierFitter().fit_left_censoring(
             model.durations, model.event_observed, label=COL_EMP, timeline=timeline
         )
     elif CensoringType.is_right_censoring(model):
-        kmf = KaplanMeierFitter().fit_right_censoring(
+        empirical_kmf = KaplanMeierFitter().fit_right_censoring(
             model.durations, model.event_observed, label=COL_EMP, timeline=timeline
         )
     elif CensoringType.is_interval_censoring(model):
-        raise NotImplementedError()
+        raise NotImplementedError("lifelines does not have a non-parametric interval model yet.")
 
-    kmf.plot_cumulative_density(ax=ax, **plot_kwargs)
+    empirical_kmf.plot_cumulative_density(ax=ax, **plot_kwargs)
 
     dist = get_distribution_name_of_lifelines_model(model)
     dist_object = create_scipy_stats_model_from_lifelines_model(model)
     ax.plot(timeline, dist_object.cdf(timeline), label="fitted %s" % dist, **plot_kwargs)
     ax.legend()
+    return ax
+
+
+def rmst_plot(model, model2=None, t=np.inf, ax=None, text_position=None, **plot_kwargs):
+    """
+    This functions plots the survival function of the model plus it's area-under-the-curve (AUC) up
+    until the point ``t``. The AUC is known as the restricted mean survival time (RMST).
+
+    To compare the difference between two models' survival curves, you can supply an
+    additional model in ``model2``.
+
+    Parameters
+    -----------
+    model: lifelines.UnivariateFitter
+    model2: lifelines.UnivariateFitter, optional
+        used to compute the delta RMST of two models
+    t: float
+        the upper bound of the expectation
+    ax: axis
+    text_position: tuple
+        move the text position of the RMST.
+
+
+    Examples
+    ---------
+
+    >>> from lifelines.utils import restricted_mean_survival_time
+    >>> from lifelines.datasets import load_waltons
+    >>> from lifelines.plotting import rmst_plot
+    >>>
+    >>> df = load_waltons()
+    >>> ix = df['group'] == 'miR-137'
+    >>> T, E = df['T'], df['E']
+    >>> time_limit = 50
+    >>>
+    >>> kmf_exp = KaplanMeierFitter().fit(T[ix], E[ix], label='exp')
+    >>> kmf_con = KaplanMeierFitter().fit(T[~ix], E[~ix], label='control')
+    >>>
+    >>> ax = plt.subplot(311)
+    >>> rmst_plot(kmf_exp, t=time_limit, ax=ax)
+    >>>
+    >>> ax = plt.subplot(312)
+    >>> rmst_plot(kmf_con, t=time_limit, ax=ax)
+    >>>
+    >>> ax = plt.subplot(313)
+    >>> rmst_plot(kmf_exp, model2=kmf_con, t=time_limit, ax=ax)
+
+
+
+    """
+    from lifelines.utils import restricted_mean_survival_time
+
+    if ax is None:
+        ax = plt.gca()
+
+    rmst = restricted_mean_survival_time(model, t=t)
+    c = ax._get_lines.get_next_color()
+    model.plot_survival_function(ax=ax, color=c, ci_show=False, **plot_kwargs)
+
+    if text_position is None:
+        text_position = (np.percentile(model.timeline, 10), 0.15)
+
+    if model2 is not None:
+        c2 = ax._get_lines.get_next_color()
+        rmst2 = restricted_mean_survival_time(model2, t=t)
+        model2.plot_survival_function(ax=ax, color=c2, ci_show=False, **plot_kwargs)
+        timeline = np.unique(model.timeline.tolist() + model2.timeline.tolist() + [t])
+        predict1 = model.predict(timeline).loc[:t]
+        predict2 = model2.predict(timeline).loc[:t]
+        # positive
+        ax.fill_between(
+            timeline[timeline <= t],
+            predict1,
+            predict2,
+            where=predict1 > predict2,
+            step="post",
+            facecolor="w",
+            hatch="|",
+            edgecolor="grey",
+        )
+
+        # negative
+        ax.fill_between(
+            timeline[timeline <= t],
+            predict1,
+            predict2,
+            where=predict1 < predict2,
+            step="post",
+            hatch="-",
+            facecolor="w",
+            edgecolor="grey",
+        )
+
+        ax.text(
+            text_position[0],
+            text_position[1],
+            "RMST(%s) -\n   RMST(%s)=%.3f" % (model._label, model2._label, rmst - rmst2),
+        )  # dynamically pick this.
+    else:
+        rmst = restricted_mean_survival_time(model, t=t)
+        sf_exp_at_limit = model.predict(np.append(model.timeline, t)).sort_index().loc[:t]
+        ax.fill_between(sf_exp_at_limit.index, sf_exp_at_limit.values, step="post", color=c, alpha=0.25)
+        ax.text(text_position[0], text_position[1], "RMST=%.3f" % rmst)  # dynamically pick this.
+
+    ax.axvline(t, ls="--", color="k")
+    ax.set_ylim(0, 1)
     return ax
 
 
@@ -125,7 +235,7 @@ def qq_plot(model, ax=None, **plot_kwargs):
     elif CensoringType.is_right_censoring(model):
         kmf = KaplanMeierFitter().fit_right_censoring(model.durations, model.event_observed, label=COL_EMP)
     elif CensoringType.is_interval_censoring(model):
-        raise NotImplementedError()
+        raise NotImplementedError("lifelines does not have a non-parametric interval model yet.")
 
     q = np.unique(kmf.cumulative_density_.values[:, 0])
     # this is equivalent to the old code `qth_survival_times(q, kmf.cumulative_density, cdf=True)`
@@ -394,7 +504,7 @@ def plot_lifetimes(
 
 
 def set_kwargs_color(kwargs):
-    kwargs["c"] = coalesce(kwargs.get("c"), kwargs.get("color"), kwargs["ax"]._get_lines.get_next_color())
+    kwargs["color"] = coalesce(kwargs.get("c"), kwargs.get("color"), kwargs["ax"]._get_lines.get_next_color())
 
 
 def set_kwargs_drawstyle(kwargs, default="steps-post"):
@@ -418,7 +528,7 @@ def create_dataframe_slicer(iloc, loc, timeline):
     return lambda df: getattr(df, get_method)[user_submitted_slice]
 
 
-def plot_loglogs(cls, loc=None, iloc=None, show_censors=False, censor_styles=None, ax=None, **kwargs):
+def loglogs_plot(cls, loc=None, iloc=None, show_censors=False, censor_styles=None, ax=None, **kwargs):
     """
     Specifies a plot of the log(-log(SV)) versus log(time) where SV is the estimated survival function.
     """
@@ -443,7 +553,7 @@ def plot_loglogs(cls, loc=None, iloc=None, show_censors=False, censor_styles=Non
     dataframe_slicer = create_dataframe_slicer(iloc, loc, cls.timeline)
 
     # plot censors
-    colour = kwargs["c"]
+    colour = kwargs["color"]
 
     if show_censors and cls.event_table["censored"].sum() > 0:
         cs = {"marker": "|", "ms": 12, "mew": 1}
@@ -582,7 +692,7 @@ class PlotEstimateConfig:
         self.show_censors = show_censors
         # plot censors
         self.ax = ax
-        self.colour = kwargs["c"]
+        self.colour = kwargs["color"]
         self.kwargs = kwargs
 
         if isinstance(estimate, str):

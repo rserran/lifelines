@@ -8,6 +8,14 @@ from lifelines.fitters import ParametericAFTRegressionFitter
 from lifelines.utils.safe_exp import safe_exp
 
 
+from autograd.builtins import DictBox
+from autograd.numpy.numpy_boxes import ArrayBox
+from lifelines.utils import DataframeSliceDict
+from numpy import ndarray
+from pandas.core.frame import DataFrame
+from typing import Dict, List, Optional, Union
+
+
 class WeibullAFTFitter(ParametericAFTRegressionFitter):
     r"""
     This class implements a Weibull AFT model. The model has parameterized
@@ -16,7 +24,12 @@ class WeibullAFTFitter(ParametericAFTRegressionFitter):
 
     .. math::  S(t; x, y) = \exp\left(-\left(\frac{t}{\lambda(x)}\right)^{\rho(y)}\right),
 
-    which implies the cumulative hazard rate is
+    With no covariates, the Weibull model's parameters has the following interpretations: The :math:`\lambda` (scale) parameter has an
+    applicable interpretation: it represent the time when 37% of the population has died.
+    The :math:`\rho` (shape) parameter controls if the cumulative hazard (see below) is convex or concave, representing accelerating or decelerating
+    hazards.
+
+    The cumulative hazard rate is
 
     .. math:: H(t; x, y) = \left(\frac{t}{\lambda(x)} \right)^{\rho(y)},
 
@@ -67,12 +80,21 @@ class WeibullAFTFitter(ParametericAFTRegressionFitter):
     _scipy_fit_method = "SLSQP"
     _scipy_fit_options = {"ftol": 1e-10, "maxiter": 200}
 
-    def __init__(self, alpha=0.05, penalizer=0.0, l1_ratio=0.0, fit_intercept=True, model_ancillary=False):
+    def __init__(
+        self,
+        alpha: float = 0.05,
+        penalizer: float = 0.0,
+        l1_ratio: float = 0.0,
+        fit_intercept: bool = True,
+        model_ancillary: bool = False,
+    ) -> None:
         self._ancillary_parameter_name = "rho_"
         self._primary_parameter_name = "lambda_"
         super(WeibullAFTFitter, self).__init__(alpha, penalizer, l1_ratio, fit_intercept, model_ancillary)
 
-    def _cumulative_hazard(self, params, T, Xs):
+    def _cumulative_hazard(
+        self, params: Union[DictBox, Dict[str, ndarray]], T: Union[float, ndarray], Xs: DataframeSliceDict
+    ) -> Union[ndarray, ArrayBox]:
         lambda_params = params["lambda_"]
         log_lambda_ = Xs["lambda_"] @ lambda_params
 
@@ -81,7 +103,7 @@ class WeibullAFTFitter(ParametericAFTRegressionFitter):
 
         return safe_exp(rho_ * (np.log(np.clip(T, 1e-25, np.inf)) - log_lambda_))
 
-    def _log_hazard(self, params, T, Xs):
+    def _log_hazard(self, params: DictBox, T: Union[float, ndarray], Xs: DataframeSliceDict) -> ArrayBox:
         lambda_params = params["lambda_"]
         log_lambda_ = Xs["lambda_"] @ lambda_params
 
@@ -90,7 +112,14 @@ class WeibullAFTFitter(ParametericAFTRegressionFitter):
 
         return log_rho_ - log_lambda_ + np.expm1(log_rho_) * (np.log(T) - log_lambda_)
 
-    def predict_percentile(self, df, ancillary_df=None, p=0.5, conditional_after=None):
+    def predict_percentile(
+        self,
+        df: DataFrame,
+        *,
+        ancillary_df: Optional[DataFrame] = None,
+        p: float = 0.5,
+        conditional_after: Optional[ndarray] = None
+    ) -> DataFrame:
         """
         Returns the median lifetimes for the individuals, by default. If the survival curve of an
         individual does not cross 0.5, then the result is infinity.
@@ -118,16 +147,20 @@ class WeibullAFTFitter(ParametericAFTRegressionFitter):
         predict_median
 
         """
+
         lambda_, rho_ = self._prep_inputs_for_prediction_and_return_scores(df, ancillary_df)
 
-        if conditional_after is None:
+        if conditional_after is None and len(df.shape) == 2:
             conditional_after = np.zeros(df.shape[0])
+        elif conditional_after is None and len(df.shape) == 1:
+            conditional_after = np.zeros(1)
+
         return pd.DataFrame(
             lambda_ * np.power(-np.log(p) + (conditional_after / lambda_) ** rho_, 1 / rho_) - conditional_after,
             index=_get_index(df),
         )
 
-    def predict_expectation(self, df, ancillary_df=None):
+    def predict_expectation(self, df: DataFrame, ancillary_df: Optional[DataFrame] = None) -> DataFrame:
         """
         Predict the expectation of lifetimes, :math:`E[T | x]`.
 

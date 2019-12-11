@@ -136,17 +136,23 @@ Alternatively, we can call :meth:`~lifelines.fitters.kaplan_meier_fitter.KaplanM
     :align: center
 
 The median time in office, which defines the point in time where on
-average 1/2 of the population has expired, is a property:
+average 50% of the population has expired, is a property:
 
 .. code:: python
 
-    kmf.median_
+    kmf.median_survival_time_
     #   4.0
 
 
 
 Interesting that it is only four years. That means, around the world, elected leaders
-have a 50% chance of cessation in four years or less!
+have a 50% chance of cessation in four years or less! To get the confidence interval of the median, you can use:
+
+.. code:: python
+
+    from lifelines.utils import median_survival_times
+    median_ci = median_survival_times(kmf.confidence_interval_)
+
 
 Let's segment on democratic regimes vs non-democratic regimes. Calling
 ``plot`` on either the estimate itself or the fitter object will return
@@ -211,6 +217,7 @@ mark, you probably have a long life ahead. Meanwhile, a democratic
 leader rarely makes it past ten years, and then have a very short
 lifetime past that.
 
+
 Here the difference between survival functions is very obvious, and
 performing a statistical test seems pedantic. If the curves are more
 similar, or we possess less data, we may be interested in performing a
@@ -242,6 +249,9 @@ we rule that the series have different generators.
            260.47  <0.005    192.23
     """"
 
+There are alternative (and sometimes better) tests of survival functions, and we explain more here: `Statistically compare two populations`_
+
+
 Lets compare the different *types* of regimes present in the dataset:
 
 .. code:: python
@@ -267,9 +277,6 @@ Lets compare the different *types* of regimes present in the dataset:
 .. image:: images/lifelines_intro_all_regimes.png
 
 
-There are alternative (and sometimes better) tests of survival functions, and we explain more here: `Statistically compare two populations`_
-
---------------
 
 Getting data into the right format
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

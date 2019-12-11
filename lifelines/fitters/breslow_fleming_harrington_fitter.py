@@ -17,9 +17,7 @@ class BreslowFlemingHarringtonFitter(UnivariateFitter):
     there are too few early truncation times, it may happen that is the number of patients at risk and
     the number of deaths is the same.
 
-    Mathematically, the NAF estimator is the negative logarithm of the BFH estimator.
-
-    BreslowFlemingHarringtonFitter(alpha=0.05)
+    Mathematically, the Nelson-Aalen estimator is the negative logarithm of the Breslow-Fleming-Harrington estimator.
 
     Parameters
     ----------
@@ -35,7 +33,7 @@ class BreslowFlemingHarringtonFitter(UnivariateFitter):
         event_observed=None,
         timeline=None,
         entry=None,
-        label="BFH_estimate",
+        label=None,
         alpha=None,
         ci_labels=None,
         weights=None,
@@ -67,12 +65,17 @@ class BreslowFlemingHarringtonFitter(UnivariateFitter):
           self, with new properties like ``survival_function_``.
 
         """
-        self._label = label
+        self._label = coalesce(label, self._label, "BFH_estimate")
         alpha = coalesce(alpha, self.alpha)
 
         naf = NelsonAalenFitter(alpha=alpha)
         naf.fit(
-            durations, event_observed=event_observed, timeline=timeline, label=label, entry=entry, ci_labels=ci_labels
+            durations,
+            event_observed=event_observed,
+            timeline=timeline,
+            label=self._label,
+            entry=entry,
+            ci_labels=ci_labels,
         )
         self.durations, self.event_observed, self.timeline, self.entry, self.event_table, self.weights = (
             naf.durations,
@@ -96,17 +99,14 @@ class BreslowFlemingHarringtonFitter(UnivariateFitter):
         self.plot_survival_function = self.plot
         return self
 
-    def survival_function_at_times(self, times, label=None):
+    def survival_function_at_times(self, times, label=None) -> pd.Series:
         """
         Return a Pandas series of the predicted survival value at specific times
 
         Parameters
         -----------
         times: iterable or float
-
-        Returns
-        --------
-        pd.Series
+        label: str
 
         """
         label = coalesce(label, self._label)

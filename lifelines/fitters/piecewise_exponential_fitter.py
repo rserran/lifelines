@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 import autograd.numpy as np
-from lifelines.fitters import KnownModelParametericUnivariateFitter
+from lifelines.fitters import KnownModelParametricUnivariateFitter
 
 
-class PiecewiseExponentialFitter(KnownModelParametericUnivariateFitter):
+class PiecewiseExponentialFitter(KnownModelParametricUnivariateFitter):
     r"""
     This class implements an Piecewise Exponential model for univariate data. The model has parameterized
     hazard rate:
@@ -18,7 +18,7 @@ class PiecewiseExponentialFitter(KnownModelParametericUnivariateFitter):
     You specify the breakpoints, :math:`\tau_i`, and *lifelines* will find the
     optional values for the parameters.
 
-    After calling the `.fit` method, you have access to properties like: ``survival_function_``, ``plot``, ``cumulative_hazard_``
+    After calling the ``.fit`` method, you have access to properties like: ``survival_function_``, ``plot``, ``cumulative_hazard_``
     A summary of the fit is available with the method ``print_summary()``
 
     Parameters
@@ -45,7 +45,7 @@ class PiecewiseExponentialFitter(KnownModelParametericUnivariateFitter):
         The estimated cumulative density function (with custom timeline if provided)
     variance_matrix_ : numpy array
         The variance matrix of the coefficients
-    median_: float
+    median_survival_time_: float
         The median time to event
     lambda_i_: float
         The fitted parameter in the model, for i = 0, 1 ... n-1 breakpoints

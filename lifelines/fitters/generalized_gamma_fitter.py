@@ -3,12 +3,12 @@ import autograd.numpy as np
 from autograd.numpy import exp, log
 from scipy.special import gammainccinv, gammaincinv
 from autograd_gamma import gammaincc, gammainc, gammaln, gammainccln, gammaincln
-from lifelines.fitters import KnownModelParametericUnivariateFitter
+from lifelines.fitters import KnownModelParametricUnivariateFitter
 from lifelines.utils import CensoringType
 from lifelines.utils.safe_exp import safe_exp
 
 
-class GeneralizedGammaFitter(KnownModelParametericUnivariateFitter):
+class GeneralizedGammaFitter(KnownModelParametricUnivariateFitter):
     r"""
 
     This class implements a Generalized Gamma model for univariate data. The model has parameterized
@@ -30,12 +30,12 @@ class GeneralizedGammaFitter(KnownModelParametericUnivariateFitter):
     1. When :math:`\lambda = 1` and :math:`\sigma = 1`, then the data is Exponential.
     2. When :math:`\lambda = 1` then the data is Weibull.
     3. When :math:`\sigma = \lambda` then the data is Gamma.
-    4. When :math:`\lambda = 0` then the data is  Log-Normal.
+    4. When :math:`\lambda = 0` then the data is Log-Normal.
     5. When :math:`\lambda = -1` then the data is Inverse-Weibull.
-    6. When :math:`-\sigma = \lambda` then the data is Inverse-Gamma.
+    6. When :math:`\sigma = -\lambda` then the data is Inverse-Gamma.
 
 
-    After calling the `.fit` method, you have access to properties like: ``cumulative_hazard_``, ``survival_function_``,
+    After calling the ``.fit`` method, you have access to properties like: ``cumulative_hazard_``, ``survival_function_``,
     A summary of the fit is available with the method ``print_summary()``.
 
 
@@ -79,7 +79,7 @@ class GeneralizedGammaFitter(KnownModelParametericUnivariateFitter):
         The estimated cumulative density function (with custom timeline if provided)
     variance_matrix_ : numpy array
         The variance matrix of the coefficients
-    median_: float
+    median_survival_time_: float
         The median time to event
     lambda_: float
         The fitted parameter in the model
@@ -99,7 +99,7 @@ class GeneralizedGammaFitter(KnownModelParametericUnivariateFitter):
 
     _fitted_parameter_names = ["mu_", "ln_sigma_", "lambda_"]
     _bounds = [(None, None), (None, None), (None, None)]
-    _compare_to_values = np.array([0, 0, 1])
+    _compare_to_values = np.array([0.0, 0.0, 1.0])
 
     def _create_initial_point(self, Ts, E, *args):
         if CensoringType.is_right_censoring(self):

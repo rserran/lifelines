@@ -40,7 +40,7 @@ from lifelines.utils import (
     qth_survival_time,
 )
 
-from lifelines.fitters import BaseFitter, ParametericUnivariateFitter, ParametricRegressionFitter
+from lifelines.fitters import BaseFitter, ParametricUnivariateFitter, ParametricRegressionFitter
 
 from lifelines import (
     WeibullFitter,
@@ -129,7 +129,7 @@ class CustomRegressionModelTesting(ParametricRegressionFitter):
 
         lambda_ = anp.exp(anp.dot(Xs["lambda_"], params["lambda_"]))
         rho_ = anp.exp(anp.dot(Xs["rho_"], params["rho_"]))
-        cdf = 1 - anp.exp(-(T / lambda_) ** rho_)
+        cdf = 1 - anp.exp(-((T / lambda_) ** rho_))
 
         return -anp.log((1 - c) + c * (1 - cdf))
 
@@ -207,7 +207,7 @@ class TestParametricUnivariateFitters:
         E = ~np.isnan(T)
         T[np.isnan(T)] = 50
 
-        class UpperAsymptoteFitter(ParametericUnivariateFitter):
+        class UpperAsymptoteFitter(ParametricUnivariateFitter):
 
             _fitted_parameter_names = ["c_", "mu_"]
 
@@ -255,7 +255,7 @@ class TestParametricUnivariateFitters:
         for fitter in known_parametric_univariate_fitters:
             fitter().fit_left_censoring(T, E)
 
-    def test_parametric_univarite_fitters_can_print_summary(
+    def test_parametric_univariate_fitters_can_print_summary(
         self, positive_sample_lifetimes, known_parametric_univariate_fitters
     ):
         for fitter in known_parametric_univariate_fitters:
@@ -263,7 +263,7 @@ class TestParametricUnivariateFitters:
             f.summary
             f.print_summary()
 
-    def test_parametric_univarite_fitters_has_confidence_intervals(
+    def test_parametric_univariate_fitters_has_confidence_intervals(
         self, positive_sample_lifetimes, known_parametric_univariate_fitters
     ):
         for fitter in known_parametric_univariate_fitters:
@@ -273,14 +273,14 @@ class TestParametricUnivariateFitters:
             assert f.confidence_interval_hazard_ is not None
 
     def test_warnings_for_problematic_cumulative_hazards(self):
-        class NegativeFitter(ParametericUnivariateFitter):
+        class NegativeFitter(ParametricUnivariateFitter):
 
             _fitted_parameter_names = ["a"]
 
             def _cumulative_hazard(self, params, times):
                 return params[0] * (times - 0.4)
 
-        class DecreasingFitter(ParametericUnivariateFitter):
+        class DecreasingFitter(ParametricUnivariateFitter):
 
             _fitted_parameter_names = ["a"]
 
@@ -297,6 +297,7 @@ class TestParametricUnivariateFitters:
         df = load_diabetes()
         for fitter in known_parametric_univariate_fitters:
             f = fitter().fit_interval_censoring(df["left"], df["right"])
+            f.print_summary()
 
     def test_parameteric_models_all_can_do_interval_censoring_with_prediction(
         self, known_parametric_univariate_fitters
@@ -343,8 +344,9 @@ class TestUnivariateFitters:
         for f in univariate_fitters:
             f = f()
             f.fit(T, E)
-            assert f.__repr__() == "<lifelines.%s: fitted with %d total observations, %d right-censored observations>" % (
+            assert f.__repr__() == """<lifelines.%s:"%s", fitted with %d total observations, %d right-censored observations>""" % (
                 f._class_name,
+                f._label,
                 E.shape[0],
                 E.shape[0] - E.sum(),
             )
@@ -367,13 +369,13 @@ class TestUnivariateFitters:
         for f in univariate_fitters:
             assert f().alpha == 0.05
 
-    def test_univarite_fitters_accept_late_entries(self, positive_sample_lifetimes, univariate_fitters):
+    def test_univariate_fitters_accept_late_entries(self, positive_sample_lifetimes, univariate_fitters):
         entries = 0.1 * positive_sample_lifetimes[0]
         for fitter in univariate_fitters:
             f = fitter().fit(positive_sample_lifetimes[0], entry=entries)
             assert f.entry is not None
 
-    def test_univarite_fitters_with_survival_function_have_conditional_time_to_(
+    def test_univariate_fitters_with_survival_function_have_conditional_time_to_(
         self, positive_sample_lifetimes, univariate_fitters
     ):
         for fitter in univariate_fitters:
@@ -531,7 +533,7 @@ class TestUnivariateFitters:
                 with_list = fitter.fit(list(T), list(C)).survival_function_
                 assert_frame_equal(with_list, with_array)
 
-                if isinstance(fitter, ParametericUnivariateFitter):
+                if isinstance(fitter, ParametricUnivariateFitter):
                     with_array = fitter.fit_interval_censoring(T, T + 1, (T == T + 1)).survival_function_
                     with_list = fitter.fit_interval_censoring(
                         list(T), list(T + 1), list((T == T + 1))
@@ -732,7 +734,7 @@ class TestLogNormalFitter:
 
         assert abs(mu - lnf.mu_) < 0.05
         assert abs(sigma - lnf.sigma_) < 0.05
-        assert abs(lnf.median_ / np.percentile(X, 50) - 1) < 0.05
+        assert abs(lnf.median_survival_time_ / np.percentile(X, 50) - 1) < 0.05
 
     def test_lnf_inference_with_large_sigma(self, lnf):
         N = 250000
@@ -893,8 +895,8 @@ class TestWeibullFitter:
 
         wf = WeibullFitter().fit_left_censoring(T, E)
 
-        assert wf.summary.loc["rho_", "lower 0.95"] < 5 < wf.summary.loc["rho_", "upper 0.95"]
-        assert wf.summary.loc["lambda_", "lower 0.95"] < 0.5 < wf.summary.loc["lambda_", "upper 0.95"]
+        assert wf.summary.loc["rho_", "coef lower 95%"] < 5 < wf.summary.loc["rho_", "coef upper 95%"]
+        assert wf.summary.loc["lambda_", "coef lower 95%"] < 0.5 < wf.summary.loc["lambda_", "coef upper 95%"]
 
     def test_weibull_with_delayed_entries(self):
         # note the the independence of entry and final time is really important
@@ -969,14 +971,14 @@ class TestGeneralizedGammaFitter:
         T = np.random.exponential(1.0, size=20000)
         gg = GeneralizedGammaFitter().fit(T)
         gg.print_summary()
-        assert gg.summary.loc["lambda_"]["lower 0.95"] < 1 < gg.summary.loc["lambda_"]["upper 0.95"]
-        assert gg.summary.loc["ln_sigma_"]["lower 0.95"] < 0 < gg.summary.loc["ln_sigma_"]["upper 0.95"]
+        assert gg.summary.loc["lambda_"]["coef lower 95%"] < 1 < gg.summary.loc["lambda_"]["coef upper 95%"]
+        assert gg.summary.loc["ln_sigma_"]["coef lower 95%"] < 0 < gg.summary.loc["ln_sigma_"]["coef upper 95%"]
 
     def test_weibull_data_inference(self):
         T = 5 * np.random.exponential(1, size=10000) ** 0.5
         gg = GeneralizedGammaFitter().fit(T)
         gg.print_summary()
-        assert gg.summary.loc["lambda_"]["lower 0.95"] < 1 < gg.summary.loc["lambda_"]["upper 0.95"]
+        assert gg.summary.loc["lambda_"]["coef lower 95%"] < 1 < gg.summary.loc["lambda_"]["coef upper 95%"]
 
     def test_gamma_data_inference(self):
         T = np.random.gamma(shape=4, scale=0.5, size=15000)
@@ -1493,6 +1495,11 @@ class TestRegressionFitters:
         regression_models_sans_strata_model.append(CoxPHFitter(strata=["race", "paro", "mar", "wexp"]))
         return regression_models_sans_strata_model
 
+    def test_print_summary(self, rossi, regression_models):
+        for fitter in regression_models:
+            fitter.fit(rossi, "week", "arrest")
+            fitter.print_summary()
+
     def test_pickle_serialization(self, rossi, regression_models):
         for fitter in regression_models:
             fitter.fit(rossi, "week", "arrest")
@@ -1779,6 +1786,39 @@ class TestAFTFitters:
     def models(self):
         return [WeibullAFTFitter(), LogNormalAFTFitter(), LogLogisticAFTFitter()]
 
+    def test_predict_median_takes_dataframe_with_bools(self):
+
+        df = pd.DataFrame(
+            [
+                {"dep_y_obs": 1.0, "dep_y_cens": False, "idp_x1_obs": 5.0, "idp_x1_cens": True},
+                {"dep_y_obs": 3.0, "dep_y_cens": True, "idp_x1_obs": 3.0, "idp_x1_cens": False},
+                {"dep_y_obs": 2.0, "dep_y_cens": True, "idp_x1_obs": 2.0, "idp_x1_cens": False},
+                {"dep_y_obs": 2.0, "dep_y_cens": False, "idp_x1_obs": 6.0, "idp_x1_cens": True},
+                {"dep_y_obs": 2.5, "dep_y_cens": True, "idp_x1_obs": 7.0, "idp_x1_cens": True},
+                {"dep_y_obs": 2.7, "dep_y_cens": True, "idp_x1_obs": 8.0, "idp_x1_cens": True},
+            ]
+        )
+
+        wf = WeibullAFTFitter()
+        wf.fit_left_censoring(df, "dep_y_obs", "dep_y_cens")
+        wf.predict_median(df)
+
+    def test_predict_median_accepts_series(self, rossi):
+        df = pd.DataFrame(
+            [
+                {"dep_y_obs": 1.0, "dep_y_cens": False, "idp_x1_obs": 5.0, "idp_x1_cens": True},
+                {"dep_y_obs": 3.0, "dep_y_cens": True, "idp_x1_obs": 3.0, "idp_x1_cens": False},
+                {"dep_y_obs": 2.0, "dep_y_cens": True, "idp_x1_obs": 2.0, "idp_x1_cens": False},
+                {"dep_y_obs": 2.0, "dep_y_cens": False, "idp_x1_obs": 6.0, "idp_x1_cens": True},
+                {"dep_y_obs": 2.5, "dep_y_cens": True, "idp_x1_obs": 7.0, "idp_x1_cens": True},
+                {"dep_y_obs": 2.7, "dep_y_cens": True, "idp_x1_obs": 8.0, "idp_x1_cens": True},
+            ]
+        )
+
+        wf = WeibullAFTFitter()
+        wf.fit_left_censoring(df, "dep_y_obs", "dep_y_cens")
+        wf.predict_median(df.loc[1])
+
     def test_heterogenous_initial_point(self, rossi):
         aft = WeibullAFTFitter()
         aft.fit(rossi, "week", "arrest", initial_point={"lambda_": np.zeros(8), "rho_": np.zeros(1)})
@@ -1967,6 +2007,7 @@ class TestAFTFitters:
 
         for model in models:
             model.fit_left_censoring(df, "T", "E")
+            model.print_summary()
 
     def test_model_ancillary_parameter_works_as_expected(self, rossi):
         aft = WeibullAFTFitter(model_ancillary=True)
@@ -2217,7 +2258,6 @@ class TestWeibullAFTFitter:
         # r = survreg(Surv(week, arrest) ~ fin + race + wexp + mar + paro + prio, data=df, dist='weibull', robust=TRUE, weights=age)
 
         aft.fit(rossi, "week", "arrest", robust=True, weights_col="age")
-        print(aft.summary["se(coef)"])
 
         npt.assert_allclose(aft.summary.loc[("lambda_", "fin"), "se(coef)"], 0.006581, rtol=1e-3)
         npt.assert_allclose(aft.summary.loc[("lambda_", "race"), "se(coef)"], 0.010367, rtol=1e-3)
@@ -2264,13 +2304,17 @@ class TestWeibullAFTFitter:
         npt.assert_allclose(aft.log_likelihood_, -2027.196, rtol=1e-3)
 
         npt.assert_allclose(aft.summary.loc[("lambda_", "gender"), "se(coef)"], 0.02823, rtol=1e-1)
-        # npt.assert_allclose(aft.summary.loc[("lambda_", "_intercept"), "se(coef)"], 0.42273, rtol=1e-1)
-        # npt.assert_allclose(aft.summary.loc[("rho_", "_intercept"), "se(coef)"], 0.08356, rtol=1e-1)
+
+        with pytest.raises(AssertionError):
+            npt.assert_allclose(aft.summary.loc[("lambda_", "_intercept"), "se(coef)"], 0.42273, rtol=1e-1)
+            npt.assert_allclose(aft.summary.loc[("rho_", "_intercept"), "se(coef)"], 0.08356, rtol=1e-1)
 
         aft.fit_interval_censoring(df, "left", "right", "E", ancillary_df=True)
 
         npt.assert_allclose(aft.log_likelihood_, -2025.813, rtol=1e-3)
-        # npt.assert_allclose(aft.summary.loc[("rho_", "gender"), "coef"], 0.1670, rtol=1e-4)
+
+        with pytest.raises(AssertionError):
+            npt.assert_allclose(aft.summary.loc[("rho_", "gender"), "coef"], 0.1670, rtol=1e-4)
 
     def test_aft_weibull_with_weights(self, rossi, aft):
         """
@@ -2305,11 +2349,21 @@ class TestWeibullAFTFitter:
     def test_aft_weibull_can_do_interval_prediction(self, aft):
         # https://github.com/CamDavidsonPilon/lifelines/issues/839
         df = load_diabetes()
+
+        aft = WeibullAFTFitter()
         df["gender"] = df["gender"] == "male"
         df["E"] = df["left"] == df["right"]
 
         aft.fit_interval_censoring(df, "left", "right", "E")
         aft.predict_survival_function(df)
+        aft.print_summary()
+
+        aft = WeibullAFTFitter()
+        df = df.drop("E", axis=1)
+
+        aft.fit_interval_censoring(df, "left", "right")
+        aft.predict_survival_function(df)
+        aft.print_summary()
 
 
 class TestCoxPHFitter:
@@ -2342,6 +2396,14 @@ class TestCoxPHFitter:
         npt.assert_allclose(explicit.loc[10.0, 0], p2.loc[2.0, 0])
         npt.assert_allclose(explicit.loc[12.0, 0], p2.loc[4.0, 0])
         npt.assert_allclose(explicit.loc[20.0, 0], p2.loc[12.0, 0])
+
+    def test_conditional_after_with_strata_in_prediction2(self, rossi, cph):
+
+        cph.fit(rossi, duration_col="week", event_col="arrest", strata=["race"])
+
+        censored_subjects = rossi.loc[~rossi["arrest"].astype(bool)]
+        censored_subjects_last_obs = censored_subjects["week"]
+        pred = cph.predict_survival_function(censored_subjects, conditional_after=censored_subjects_last_obs)
 
     def test_conditional_after_in_prediction_multiple_subjects(self, rossi, cph):
         rossi.loc[rossi["week"] == 1, "week"] = 0
@@ -2376,11 +2438,10 @@ class TestCoxPHFitter:
         assert p2.index.tolist() == [10.0, 20.0, 30.0]
 
     def test_that_a_convergence_warning_is_not_thrown_if_using_compute_residuals(self, rossi):
-        rossi["c"] = rossi["week"] + np.random.exponential(rossi.shape[0])
+        rossi["c"] = rossi["week"]
 
         cph = CoxPHFitter(penalizer=1.0)
-        with pytest.warns(ConvergenceWarning):
-            cph.fit(rossi, "week", "arrest")
+        cph.fit(rossi, "week", "arrest")
 
         with pytest.warns(None) as record:
             cph.compute_residuals(rossi, "martingale")
@@ -2667,7 +2728,7 @@ number of subjects = 432
   time fit was run = 2018-10-23 02:40:45 UTC
 
 ---
-        coef  exp(coef)  se(coef)       z      p  lower 0.95  upper 0.95
+        coef  exp(coef)  se(coef)       z      p  coef lower 95%  coef upper 95%
 fin  -0.3794     0.6843    0.1914 -1.9826 0.0474     -0.7545     -0.0043
 age  -0.0574     0.9442    0.0220 -2.6109 0.0090     -0.1006     -0.0143
 race  0.3139     1.3688    0.3080  1.0192 0.3081     -0.2898      0.9176
@@ -3776,7 +3837,7 @@ Log-likelihood ratio test = 33.27 on 7 df, -log2(p)=15.37
             cph.fit(df, "T")
 
         df = pd.DataFrame.from_records(zip(np.arange(0, 100), np.arange(0, 100)), columns=["x", "T"])
-        df["x"] += np.random.randn(100)
+        df["x"] += 0.01 * np.random.randn(100)
         with pytest.warns(ConvergenceWarning, match="complete separation") as w:
             cph.fit(df, "T")
 
@@ -3785,11 +3846,12 @@ Log-likelihood ratio test = 33.27 on 7 df, -log2(p)=15.37
         cp = CoxPHFitter()
         ix = rossi["arrest"] == 1
         rossi.loc[ix, "paro"] = 1
+
         with pytest.warns(ConvergenceWarning) as w:
             cp.fit(rossi, "week", "arrest", show_progress=True)
+
             assert cp.summary.loc["paro", "exp(coef)"] > 100
-            events = rossi["arrest"].astype(bool)
-            rossi.loc[events, ["paro"]].var()
+
             assert "paro have very low variance" in w[0].message.args[0]
             assert "norm(delta)" in w[1].message.args[0]
 
@@ -4446,7 +4508,7 @@ number of subjects = 103
   time fit was run = 2018-10-23 02:41:45 UTC
 
 ---
-              coef  exp(coef)  se(coef)       z      p  lower 0.95  upper 0.95
+              coef  exp(coef)  se(coef)       z      p  coef lower 95%  coef upper 95%
 age         0.0272     1.0275    0.0137  1.9809 0.0476      0.0003      0.0540
 year       -0.1463     0.8639    0.0705 -2.0768 0.0378     -0.2845     -0.0082
 surgery    -0.6372     0.5288    0.3672 -1.7352 0.0827     -1.3570      0.0825

@@ -5,9 +5,10 @@ import collections
 from datetime import datetime
 from functools import wraps
 from textwrap import dedent
-
+from typing import Union, Any, Tuple, List, Callable, Optional
 
 import numpy as np
+from numpy import ndarray
 from scipy.linalg import solve
 from scipy import stats
 from scipy.integrate import quad, trapz
@@ -41,7 +42,7 @@ class CensoringType:
     RIGHT = 3
 
     @classmethod
-    def right_censoring(cls, function):
+    def right_censoring(cls, function: Callable) -> Callable:
         @wraps(function)
         def f(self, *args, **kwargs):
             self._censoring_type = cls.RIGHT
@@ -50,7 +51,7 @@ class CensoringType:
         return f
 
     @classmethod
-    def left_censoring(cls, function):
+    def left_censoring(cls, function: Callable) -> Callable:
         @wraps(function)
         def f(self, *args, **kwargs):
             self._censoring_type = cls.LEFT
@@ -59,7 +60,7 @@ class CensoringType:
         return f
 
     @classmethod
-    def interval_censoring(cls, function):
+    def interval_censoring(cls, function: Callable) -> Callable:
         @wraps(function)
         def f(self, *args, **kwargs):
             self._censoring_type = cls.INTERVAL
@@ -68,25 +69,25 @@ class CensoringType:
         return f
 
     @classmethod
-    def is_right_censoring(cls, model):
+    def is_right_censoring(cls, model) -> bool:
         return model._censoring_type == cls.RIGHT
 
     @classmethod
-    def is_left_censoring(cls, model):
+    def is_left_censoring(cls, model) -> bool:
         return model._censoring_type == cls.LEFT
 
     @classmethod
-    def is_interval_censoring(cls, model):
+    def is_interval_censoring(cls, model) -> bool:
         return model._censoring_type == cls.INTERVAL
 
     @classmethod
-    def get_human_readable_censoring_type(cls, model):
+    def get_human_readable_censoring_type(cls, model) -> str:
         if cls.is_interval_censoring(model):
             return "interval"
         elif cls.is_right_censoring(model):
             return "right"
         else:
-            return left
+            return "left"
 
 
 class StatError(Exception):
@@ -112,7 +113,7 @@ class ApproximationWarning(RuntimeWarning):
     pass
 
 
-def qth_survival_times(q, survival_functions):
+def qth_survival_times(q, survival_functions) -> Union[pd.DataFrame, float]:
     """
     Find the times when one or more survival functions reach the qth percentile.
 
@@ -152,7 +153,6 @@ def qth_survival_times(q, survival_functions):
     else:
         d = {_q: survival_functions.apply(lambda s: qth_survival_time(_q, s)) for _q in q}
         survival_times = pd.DataFrame(d).T
-
         #  Typically, one would expect that the output should equal the "height" of q.
         #  An issue can arise if the Series q contains duplicate values. We solve
         #  this by duplicating the entire row.
@@ -162,7 +162,7 @@ def qth_survival_times(q, survival_functions):
         return survival_times
 
 
-def qth_survival_time(q, model_or_survival_function):
+def qth_survival_time(q: float, model_or_survival_function) -> float:
     """
     Returns the time when a single survival function reaches the qth percentile, that is,
     solves  :math:`q = S(t)` for :math:`t`.
@@ -171,20 +171,16 @@ def qth_survival_time(q, model_or_survival_function):
     ----------
     q: float
       value between 0 and 1.
-    model_or_survival_function: Pandas Series or single-column DataFrame, or lifelines model
+    model_or_survival_function: Series, single-column DataFrame, or lifelines model
 
-
-    Returns
-    -------
-    float
 
     See Also
     --------
     qth_survival_times, median_survival_times
     """
-    import lifelines
+    from lifelines.fitters import UnivariateFitter
 
-    if isinstance(model_or_survival_function, lifelines.fitters.UnivariateFitter):
+    if isinstance(model_or_survival_function, UnivariateFitter):
         return model_or_survival_function.percentile(q)
     elif isinstance(model_or_survival_function, pd.DataFrame):
         if model_or_survival_function.shape[1] > 1:
@@ -195,16 +191,15 @@ def qth_survival_time(q, model_or_survival_function):
     elif isinstance(model_or_survival_function, pd.Series):
         if model_or_survival_function.iloc[-1] > q:
             return np.inf
-        v = model_or_survival_function.index[(-model_or_survival_function).searchsorted([-q])[0]]
+        return model_or_survival_function.index[(-model_or_survival_function).searchsorted([-q])[0]]
     else:
         raise ValueError(
             "Unable to compute median of object %s - should be a DataFrame, Series or lifelines univariate model"
             % model_or_survival_function
         )
-    return v
 
 
-def median_survival_times(model_or_survival_function):
+def median_survival_times(model_or_survival_function) -> float:
     """
     Compute the median survival time of survival function(s).
 
@@ -219,12 +214,12 @@ def median_survival_times(model_or_survival_function):
     if isinstance(model_or_survival_function, pd.DataFrame):
         return qth_survival_times(0.5, model_or_survival_function)
     elif isinstance(model_or_survival_function, lifelines.fitters.UnivariateFitter):
-        return model.median_survival_time_
+        return model_or_survival_function.median_survival_time_
     else:
         raise ValueError("Can't compute median survival time of object %s" % model_or_survival_function)
 
 
-def restricted_mean_survival_time(model_or_survival_function, t=np.inf, return_ci=False):
+def restricted_mean_survival_time(model_or_survival_function, t: float = np.inf, return_variance=False) -> float:
     r"""
     Compute the restricted mean survival time, RMST, of a survival function. This is defined as
 
@@ -260,11 +255,24 @@ def restricted_mean_survival_time(model_or_survival_function, t=np.inf, return_c
     https://bmcmedresmethodol.biomedcentral.com/articles/10.1186/1471-2288-13-152#Sec27
 
     """
+    if t is None:
+        t = np.inf
+
+    mean = _expected_value_of_survival_up_to_t(model_or_survival_function, t)
+    if return_variance:
+        sq = _expected_value_of_survival_squared_up_to_t(model_or_survival_function, t)
+        return (mean, sq - mean ** 2)
+    else:
+        return mean
+
+
+def _expected_value_of_survival_up_to_t(model_or_survival_function, t: float = np.inf) -> float:
+
     import lifelines
 
     if isinstance(model_or_survival_function, pd.DataFrame):
         warnings.warn(
-            "Approximating RMST using the precomputed survival function. You likely will get a more accurate estimate if you provide the fitted Model instead of the survival function.",
+            "Approximating RMST using the precomputed survival function. You likely will get a more accurate estimate if you provide the fitted Model instead of the survival function.\n",
             ApproximationWarning,
         )
         sf = model_or_survival_function.loc[:t]
@@ -280,9 +288,47 @@ def restricted_mean_survival_time(model_or_survival_function, t=np.inf, return_c
             sf = sf.reset_index()
             return (sf["index"].diff().shift(-1) * sf[model._label]).sum()
         else:
-            return quad(model.survival_function_at_times, 0, t)[0]
+            return quad(model.predict, 0, t)[0]
     else:
         raise ValueError("Can't compute RMST of object %s" % model_or_survival_function)
+
+
+def _expected_value_of_survival_squared_up_to_t(model_or_survival_function, t: float = np.inf) -> float:
+    r"""
+    Compute the restricted mean survival time, RMST, of a survival function. This is defined as
+
+    .. math::  E[t]^2 = 2 \int_0^t \tau S(\tau) d\tau
+
+    For reason why we use an upper bound and not always :math:`\infty` is because the tail of a survival
+    function has high variance and strongly effects the RMST.
+
+    Parameters
+    -----------
+
+    model_or_survival_function: lifelines model or DataFrame
+        This can be a univariate model, or a pandas DataFrame. The former will provide a more accurate estimate however.
+    t: float
+        The upper limit of the integration in the RMST.
+
+
+    References
+    -------
+    https://bmcmedresmethodol.biomedcentral.com/articles/10.1186/1471-2288-13-152#Sec27
+
+    """
+    import lifelines
+
+    if isinstance(model_or_survival_function, pd.DataFrame):
+        sf = model_or_survival_function.loc[:t]
+        sf = sf.append(pd.DataFrame([1], index=[0], columns=sf.columns)).sort_index()
+        sf_tau = sf * sf.index.values[:, None]
+        return 2 * trapz(y=sf_tau.values[:, 0], x=sf_tau.index)
+    elif isinstance(model_or_survival_function, lifelines.fitters.UnivariateFitter):
+        # lifelines model
+        model = model_or_survival_function
+        return 2 * quad(lambda tau: (tau * model.predict(tau)), 0, t)[0]
+    else:
+        raise ValueError("Can't compute value for object %s" % model_or_survival_function)
 
 
 def group_survival_table_from_events(
@@ -403,7 +449,7 @@ def survival_table_from_events(
     weights=None,
     collapse=False,
     intervals=None,
-):  # pylint: disable=dangerous-default-value,too-many-locals
+) -> pd.DataFrame:  # pylint: disable=dangerous-default-value,too-many-locals
     """
     Create a survival table from right-censored dataset.
 
@@ -498,7 +544,7 @@ def survival_table_from_events(
     return event_table.astype(int)
 
 
-def _group_event_table_by_intervals(event_table, intervals):
+def _group_event_table_by_intervals(event_table, intervals) -> pd.DataFrame:
     event_table = event_table.reset_index()
 
     # use Freedman-Diaconis rule to determine bin size if user doesn't define intervals
@@ -640,18 +686,18 @@ def datetimes_to_durations(
 
     T = (end_times_ - start_times_).values.astype(freq_string).astype(float)
     if (T < 0).sum():
-        warnings.warn("Warning: some values of start_times are after end_times", UserWarning)
+        warnings.warn("Warning: some values of start_times are after end_times.\n", UserWarning)
     return T, C.values
 
 
-def coalesce(*args):
+def coalesce(*args) -> Optional[Any]:
     for arg in args:
         if arg is not None:
             return arg
     return None
 
 
-def inv_normal_cdf(p):
+def inv_normal_cdf(p) -> float:
     return stats.norm.ppf(p)
 
 
@@ -892,10 +938,12 @@ def _preprocess_inputs(durations, event_observed, timeline, entry, weights):
     return durations, event_observed, timeline.astype(float), entry, event_table, weights
 
 
-def _get_index(X):
+def _get_index(X) -> List[Any]:
     # we need a unique index because these are about to become column names.
     if isinstance(X, pd.DataFrame) and X.index.is_unique:
         index = list(X.index)
+    elif isinstance(X, pd.Series):
+        return [0]
     else:
         # If it's not a dataframe, order is up to user
         index = list(range(X.shape[0]))
@@ -1031,13 +1079,13 @@ def check_low_var(df, prescript="", postscript=""):
         warning_text = (
             "%sColumn(s) %s have very low variance. \
 This may harm convergence. Try dropping this redundant column before fitting \
-if convergence fails.%s"
+if convergence fails.%s\n"
             % (prescript, cols, postscript)
         )
         warnings.warn(dedent(warning_text), ConvergenceWarning)
 
 
-def check_complete_separation_low_variance(df, events, event_col):
+def check_complete_separation_low_variance(df: pd.DataFrame, events: np.ndarray, event_col: str):
 
     events = events.astype(bool)
     deaths_only = df.columns[_low_var(df.loc[events])]
@@ -1051,14 +1099,14 @@ def check_complete_separation_low_variance(df, events, event_col):
 >>> print(df.loc[events, '{cols}'].var())
 >>> print(df.loc[~events, '{cols}'].var())
 
-A very low variance means that the column {cols} completely determines whether a subject dies or not. See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-separation-in-logistic-regression """.format(
+A very low variance means that the column {cols} completely determines whether a subject dies or not. See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-separation-in-logistic-regression.\n""".format(
             cols=problem_columns[0], event_col=event_col
         )
         warnings.warn(dedent(warning_text), ConvergenceWarning)
 
 
-def correlation(x, y):
-    return np.corrcoef(x, y)[1, 0]
+def pearson_correlation(x: np.ndarray, y: np.ndarray):
+    return stats.pearsonr(x, y)[0]
 
 
 def check_entry_times(T, entries):
@@ -1067,24 +1115,31 @@ def check_entry_times(T, entries):
         raise ValueError("""There exist %d rows where entry > duration.""" % count_invalid_rows)
 
 
-def check_complete_separation_close_to_perfect_correlation(df, durations):
+def check_complete_separation_close_to_perfect_correlation(df: pd.DataFrame, durations: pd.Series):
+    """
+    This computes Spearman's rank correlation between df columns and the duration vector.
+
+    Reference
+    ----------
+    https://en.wikipedia.org/wiki/Spearman%27s_rank_correlation_coefficient
+    """
+
     # slow for many columns
     THRESHOLD = 0.99
     n, _ = df.shape
-
     if n > 500:
         # let's sample to speed this up.
-        df = df.sample(n=500, random_state=0).copy()
-        durations = pd.Series(durations).sample(n=500, random_state=0).copy()
+        df = df.sample(n=500, random_state=0)
+        durations = durations.sample(n=500, random_state=0)
 
-    rank_durations = durations.argsort()
+    rank_durations = durations.values.argsort()
     for col, series in df.iteritems():
         with np.errstate(invalid="ignore", divide="ignore"):
             rank_series = series.values.argsort()
-            if abs(correlation(rank_durations, rank_series)) >= THRESHOLD:
+            if abs(pearson_correlation(rank_durations, rank_series)) >= THRESHOLD:
                 warning_text = (
                     "Column %s has high sample correlation with the duration column. This may harm convergence. This could be a form of 'complete separation'. \
-    See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-separation-in-logistic-regression"
+    See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-separation-in-logistic-regression\n"
                     % (col)
                 )
                 warnings.warn(dedent(warning_text), ConvergenceWarning)
@@ -1119,7 +1174,7 @@ def check_nans_or_infs(df_or_array):
         raise TypeError("Infs were detected in the dataset. Try using np.isinf to find the problematic values.")
 
 
-def to_episodic_format(df, duration_col, event_col, id_col=None, time_gaps=1):
+def to_episodic_format(df, duration_col, event_col, id_col=None, time_gaps=1) -> pd.DataFrame:
     """
     This function takes a "flat" dataset (that is, non-time-varying), and converts it into a time-varying dataset
     with static variables.
@@ -1143,10 +1198,6 @@ def to_episodic_format(df, duration_col, event_col, id_col=None, time_gaps=1):
         then the final long form will have 5 + 1 rows for that subject: (0, 2], (2, 4], (4, 6], (6, 8], (8, 10], (10, 10.5]
         Smaller time_gaps will produce larger DataFrames, and larger time_gaps will produce smaller DataFrames. In the limit,
         the long DataFrame will be identical to the original DataFrame.
-
-    Returns
-    --------
-    DataFrame
 
     Example
     --------
@@ -1230,7 +1281,7 @@ def to_episodic_format(df, duration_col, event_col, id_col=None, time_gaps=1):
     return dftv
 
 
-def to_long_format(df, duration_col):
+def to_long_format(df, duration_col) -> pd.DataFrame:
     """
     This function converts a survival analysis DataFrame to a lifelines "long" format. The lifelines "long"
     format is used in a common next function, ``add_covariate_to_timeline``.
@@ -1268,7 +1319,7 @@ def add_covariate_to_timeline(
     cumulative_sum=False,
     cumulative_sum_prefix="cumsum_",
     delay=0,
-):  # pylint: disable=too-many-arguments
+) -> pd.DataFrame:  # pylint: disable=too-many-arguments
     """
     This is a util function to help create a long form table tracking subjects' covariate changes over time. It is meant
     to be used iteratively as one adds more and more covariates to track over time. Before using this function, it is recommended
@@ -1396,7 +1447,7 @@ def add_covariate_to_timeline(
     return long_form_df.reset_index(drop=True)
 
 
-def covariates_from_event_matrix(df, id_col):
+def covariates_from_event_matrix(df, id_col) -> pd.DataFrame:
     """
     This is a helper function to handle binary event datastreams in a specific format and convert
     it to a format that add_covariate_to_timeline will accept. For example, suppose you have a
@@ -1456,14 +1507,15 @@ class StepSizer:
     ATM it contains lots of "magic constants"
     """
 
-    def __init__(self, initial_step_size):
-        initial_step_size = coalesce(initial_step_size, 0.95)
-        self.initial_step_size = initial_step_size
-        self.step_size = initial_step_size
-        self.temper_back_up = False
-        self.norm_of_deltas = []
+    def __init__(self, initial_step_size: Optional[float]) -> None:
+        initial_step_size = initial_step_size or 0.95
 
-    def update(self, norm_of_delta):
+        self.initial_step_size: float = initial_step_size
+        self.step_size: float = initial_step_size
+        self.temper_back_up: bool = False
+        self.norm_of_deltas: List[float] = []
+
+    def update(self, norm_of_delta: float) -> "StepSizer":
         SCALE = 1.2
         LOOKBACK = 3
 
@@ -1494,10 +1546,10 @@ class StepSizer:
         return self
 
     @staticmethod
-    def _is_monotonically_decreasing(array):
+    def _is_monotonically_decreasing(array: Union[List[float], List[float]]) -> bool:
         return np.all(np.diff(array) < 0)
 
-    def next(self):
+    def next(self) -> float:
         return self.step_size
 
 
@@ -1511,24 +1563,24 @@ def _to_1d_array(x):
     return v
 
 
-def _to_list(x):
+def _to_list(x) -> List[Any]:
     if not isinstance(x, list):
         return [x]
     return x
 
 
-def _to_tuple(x):
+def _to_tuple(x) -> Tuple[Any, ...]:
     if not isinstance(x, tuple):
         return (x,)
     return x
 
 
-def format_p_value(decimals):
+def format_p_value(decimals) -> Callable:
     threshold = 0.5 * 10 ** (-decimals)
     return lambda p: "<%s" % threshold if p < threshold else "{:4.{prec}f}".format(p, prec=decimals)
 
 
-def format_exp_floats(decimals):
+def format_exp_floats(decimals) -> Callable:
     """
     sometimes the exp. column can be too large
     """
@@ -1538,19 +1590,19 @@ def format_exp_floats(decimals):
     )
 
 
-def format_floats(decimals):
+def format_floats(decimals) -> Callable:
     return lambda f: "{:4.{prec}f}".format(f, prec=decimals)
 
 
-def leading_space(s):
+def leading_space(s) -> str:
     return " %s" % s
 
 
-def map_leading_space(list):
+def map_leading_space(list) -> List[str]:
     return [leading_space(c) for c in list]
 
 
-def interpolate_at_times(df_or_series, new_times):
+def interpolate_at_times(df_or_series, new_times) -> ndarray:
     """
 
 
@@ -1568,7 +1620,7 @@ def interpolate_at_times(df_or_series, new_times):
     return np.interp(new_times, t, y)
 
 
-def interpolate_at_times_and_return_pandas(df_or_series, new_times):
+def interpolate_at_times_and_return_pandas(df_or_series, new_times) -> Union[pd.Series, pd.DataFrame]:
     """
     TODO
     """
@@ -1610,7 +1662,7 @@ class DataframeSliceDict:
         for k in self.mappings:
             yield (k, self[k])
 
-    def filter(self, ix):
+    def filter(self, ix) -> "DataframeSliceDict":
         ix = _to_1d_array(ix)
         return DataframeSliceDict(self.df[ix], self.mappings)
 

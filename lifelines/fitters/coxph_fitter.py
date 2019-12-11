@@ -5,6 +5,7 @@ import warnings
 from textwrap import dedent, fill
 import numpy as np
 import pandas as pd
+from typing import *
 
 from numpy.linalg import norm, inv
 from scipy.linalg import solve as spsolve, LinAlgError
@@ -13,8 +14,9 @@ from scipy import stats
 
 from lifelines.fitters import BaseFitter
 from lifelines.plotting import set_kwargs_drawstyle
-from lifelines.statistics import chisq_test, proportional_hazard_test, TimeTransformers, StatisticalResult
+from lifelines.statistics import _chisq_test_p_value, proportional_hazard_test, TimeTransformers, StatisticalResult
 from lifelines.utils.lowess import lowess
+from lifelines.utils.printer import Printer
 from lifelines.utils.concordance import _concordance_summary_statistics, _concordance_ratio
 from lifelines.utils import (
     _get_index,
@@ -35,21 +37,26 @@ from lifelines.utils import (
     StepSizer,
     ConvergenceError,
     string_justify,
-    format_p_value,
-    format_floats,
-    format_exp_floats,
     interpolate_at_times_and_return_pandas,
     CensoringType,
     interpolate_at_times,
-    leading_space,
+    format_p_value,
 )
 
+from numpy import ndarray
+from pandas.core.frame import DataFrame
+from pandas.core.indexes.base import Index
+from pandas.core.series import Series
+from typing import Callable, Iterator, List, Optional, Tuple, Union
+
 __all__ = ["CoxPHFitter"]
+
+CONVERGENCE_DOCS = "Please see the following tips in the lifelines documentation: https://lifelines.readthedocs.io/en/latest/Examples.html#problems-with-convergence-in-the-cox-proportional-hazard-model"
 
 
 class BatchVsSingle:
     @staticmethod
-    def decide(batch_mode, n_unique, n_total, n_vars):
+    def decide(batch_mode: Optional[bool], n_unique: int, n_total: int, n_vars: int) -> str:
         frac_dups = n_unique / n_total
         if batch_mode or (
             # https://github.com/CamDavidsonPilon/lifelines/issues/591 for original issue.
@@ -57,14 +64,14 @@ class BatchVsSingle:
             (batch_mode is None)
             and (
                 (
-                    6.876218e-01
-                    + -1.796993e-06 * n_total
-                    + -1.204271e-11 * n_total ** 2
-                    + 1.912500e00 * frac_dups
-                    + -8.121036e-01 * frac_dups ** 2
-                    + 4.916605e-06 * n_total * frac_dups
-                    + -5.888875e-03 * n_vars
-                    + 5.473434e-09 * n_vars * n_total
+                    6.153952e-01
+                    + -3.927241e-06 * n_total
+                    + 2.544118e-11 * n_total ** 2
+                    + 2.071377e00 * frac_dups
+                    + -9.724922e-01 * frac_dups ** 2
+                    + 9.138711e-06 * n_total * frac_dups
+                    + -5.617844e-03 * n_vars
+                    + -4.402736e-08 * n_vars * n_total
                 )
                 < 1
             )
@@ -74,7 +81,6 @@ class BatchVsSingle:
 
 
 class CoxPHFitter(BaseFitter):
-
     r"""
     This class implements fitting Cox's proportional hazard model:
 
@@ -138,14 +144,22 @@ class CoxPHFitter(BaseFitter):
     baseline_survival_: DataFrame
     """
 
-    def __init__(self, alpha=0.05, tie_method="Efron", penalizer=0.0, strata=None):
-        super(CoxPHFitter, self).__init__(alpha=alpha)
+    _KNOWN_MODEL: bool = True
+    _concordance_score_: float
+
+    def __init__(
+        self,
+        tie_method: str = "Efron",
+        penalizer: float = 0.0,
+        strata: Optional[Union[List[str], str]] = None,
+        **kwargs
+    ) -> None:
+        super(CoxPHFitter, self).__init__(**kwargs)
         if penalizer < 0:
             raise ValueError("penalizer parameter must be >= 0.")
         if tie_method != "Efron":
             raise NotImplementedError("Only Efron is available at the moment.")
 
-        self.alpha = alpha
         self.tie_method = tie_method
         self.penalizer = penalizer
         self.strata = strata
@@ -153,18 +167,18 @@ class CoxPHFitter(BaseFitter):
     @CensoringType.right_censoring
     def fit(
         self,
-        df,
-        duration_col=None,
-        event_col=None,
-        show_progress=False,
-        initial_point=None,
-        strata=None,
-        step_size=None,
-        weights_col=None,
-        cluster_col=None,
-        robust=False,
-        batch_mode=None,
-    ):
+        df: pd.DataFrame,
+        duration_col: Optional[str] = None,
+        event_col: Optional[str] = None,
+        show_progress: bool = False,
+        initial_point: Optional[ndarray] = None,
+        strata: Optional[Union[str, List[str]]] = None,
+        step_size: Optional[float] = None,
+        weights_col: Optional[str] = None,
+        cluster_col: Optional[str] = None,
+        robust: bool = False,
+        batch_mode: Optional[bool] = None,
+    ) -> "CoxPHFitter":
         """
         Fit the Cox proportional hazard model to a dataset.
 
@@ -182,7 +196,7 @@ class CoxPHFitter(BaseFitter):
             lifetimes.
 
         event_col: string, optional
-            the  name of thecolumn in DataFrame that contains the subjects' death
+            the  name of the column in DataFrame that contains the subjects' death
             observation. If left as None, assume all individuals are uncensored.
 
         weights_col: string, optional
@@ -293,7 +307,11 @@ class CoxPHFitter(BaseFitter):
 
         self._norm_mean = X.mean(0)
         self._norm_std = X.std(0)
-        X_norm = normalize(X, self._norm_mean, self._norm_std)
+
+        # this is surprisingly faster to do...
+        X_norm = pd.DataFrame(
+            normalize(X.values, self._norm_mean.values, self._norm_std.values), index=X.index, columns=X.columns
+        )
 
         params_ = self._fit_model(
             X_norm, T, E, weights=weights, initial_point=initial_point, show_progress=show_progress, step_size=step_size
@@ -322,17 +340,21 @@ class CoxPHFitter(BaseFitter):
 
         return self
 
-    def _preprocess_dataframe(self, df):
+    def _preprocess_dataframe(self, df: DataFrame) -> Tuple[DataFrame, Series, Series, Series, Index, Optional[Series]]:
         # this should be a pure function
 
         df = df.copy()
 
         if self.strata is not None:
-            df = df.sort_values(by=_to_list(self.strata) + [self.duration_col])
+            sort_by = _to_list(self.strata) + (
+                [self.duration_col, self.event_col] if self.event_col else [self.duration_col]
+            )
+            df = df.sort_values(by=sort_by)
             original_index = df.index.copy()
             df = df.set_index(self.strata)
         else:
-            df = df.sort_values(by=self.duration_col)
+            sort_by = [self.duration_col, self.event_col] if self.event_col else [self.duration_col]
+            df = df.sort_values(by=sort_by)
             original_index = df.index.copy()
 
         # Extract time and event
@@ -357,16 +379,21 @@ class CoxPHFitter(BaseFitter):
         check_nans_or_infs(E)
         E = E.astype(bool)
 
-        self._check_values(X, T, E, W)
+        self._check_values_pre_fitting(X, T, E, W)
 
         return X, T, E, W, original_index, _clusters
 
-    def _check_values(self, X, T, E, W):
+    def _check_values_post_fitting(self, X, T, E, W):
+        """
+        Functions here check why a fit may have non-obviously failed
+        """
+        check_complete_separation(X, E, T, self.event_col)
+
+    def _check_values_pre_fitting(self, X, T, E, W):
+        check_low_var(X)
         check_for_numeric_dtypes_or_raise(X)
         check_nans_or_infs(T)
         check_nans_or_infs(X)
-        check_low_var(X)
-        check_complete_separation(X, E, T, self.event_col)
         # check to make sure their weights are okay
         if self.weights_col:
             if (W.astype(int) != W).any() and not self.robust:
@@ -382,16 +409,16 @@ estimate the variances. See paper "Variance estimation when using inverse probab
 
     def _fit_model(
         self,
-        X,
-        T,
-        E,
-        weights=None,
-        initial_point=None,
-        step_size=None,
-        precision=1e-07,
-        show_progress=True,
-        max_steps=50,
-    ):  # pylint: disable=too-many-statements,too-many-branches
+        X: DataFrame,
+        T: Series,
+        E: Series,
+        weights: Series,
+        initial_point: Optional[ndarray] = None,
+        step_size: Optional[float] = None,
+        precision: float = 1e-07,
+        show_progress: bool = True,
+        max_steps: int = 50,
+    ) -> ndarray:  # pylint: disable=too-many-statements,too-many-branches
         """
         Newton Rhaphson algorithm for fitting CPH model.
 
@@ -422,9 +449,13 @@ estimate the variances. See paper "Variance estimation when using inverse probab
         -------
         beta: (1,d) numpy array.
         """
-        self.path = []
-        assert precision <= 1.0, "precision must be less than or equal to 1."
+
+        decision = BatchVsSingle.decide(self._batch_mode, T.nunique(), X.shape[0], X.shape[1])
+        get_gradients = getattr(self, "_get_efron_values_%s" % decision)
+        self._batch_mode = decision == "batch"
+
         _, d = X.shape
+        self.path = []
 
         # make sure betas are correct size.
         if initial_point is not None:
@@ -436,20 +467,15 @@ estimate the variances. See paper "Variance estimation when using inverse probab
         step_sizer = StepSizer(step_size)
         step_size = step_sizer.next()
 
-        # Method of choice is just efron right now
-        if self.tie_method == "Efron":
-            decision = BatchVsSingle.decide(self._batch_mode, T.nunique(), X.shape[0], X.shape[1])
-            get_gradients = getattr(self, "_get_efron_values_%s" % decision)
-            self._batch_mode = decision == "batch"
-        else:
-            raise NotImplementedError("Only Efron is available.")
-
-        i = 0
+        delta = np.zeros_like(beta)
         converging = True
-        ll, previous_ll = 0, 0
+        ll, previous_ll = 0.0, 0.0
         start = time.time()
+        i = 0
 
         while converging:
+            beta += step_size * delta
+
             self.path.append(beta.copy())
 
             i += 1
@@ -481,32 +507,32 @@ estimate the variances. See paper "Variance estimation when using inverse probab
             # reusing a piece to make g * inv(h) * g.T faster later
             try:
                 inv_h_dot_g_T = spsolve(-h, g, assume_a="pos", check_finite=False)
-            except ValueError as e:
+            except (ValueError, np.linalg.LinAlgError) as e:
+                self._check_values_post_fitting(X, T, E, weights)
                 if "infs or NaNs" in str(e):
                     raise ConvergenceError(
-                        """Hessian or gradient contains nan or inf value(s). Convergence halted. Please see the following tips in the lifelines documentation:
-https://lifelines.readthedocs.io/en/latest/Examples.html#problems-with-convergence-in-the-cox-proportional-hazard-model
-""",
+                        """Hessian or gradient contains nan or inf value(s). Convergence halted. {0}""".format(
+                            CONVERGENCE_DOCS
+                        ),
+                        e,
+                    )
+                elif isinstance(e, np.linalg.LinAlgError):
+                    raise ConvergenceError(
+                        """Convergence halted due to matrix inversion problems. Suspicion is high collinearity. {0}""".format(
+                            CONVERGENCE_DOCS
+                        ),
                         e,
                     )
                 else:
                     # something else?
                     raise e
-            except LinAlgError as e:
-                raise ConvergenceError(
-                    """Convergence halted due to matrix inversion problems. Suspicion is high collinearity. Please see the following tips in the lifelines documentation:
-https://lifelines.readthedocs.io/en/latest/Examples.html#problems-with-convergence-in-the-cox-proportional-hazard-model
-""",
-                    e,
-                )
 
             delta = inv_h_dot_g_T
 
             if np.any(np.isnan(delta)):
+                self._check_values_post_fitting(X, T, E, weights)
                 raise ConvergenceError(
-                    """delta contains nan value(s). Convergence halted. Please see the following tips in the lifelines documentation:
-https://lifelines.readthedocs.io/en/latest/Examples.html#problems-with-convergence-in-the-cox-proportional-hazard-model
-"""
+                    """delta contains nan value(s). Convergence halted. {0}""".format(CONVERGENCE_DOCS)
                 )
 
             # Save these as pending result
@@ -519,33 +545,30 @@ https://lifelines.readthedocs.io/en/latest/Examples.html#problems-with-convergen
             if show_progress:
                 print(
                     "\rIteration %d: norm_delta = %.5f, step_size = %.4f, ll = %.5f, newton_decrement = %.5f, seconds_since_start = %.1f"
-                    % (i, norm_delta, step_size, ll, newton_decrement, time.time() - start),
-                    end="",
+                    % (i, norm_delta, step_size, ll, newton_decrement, time.time() - start)
                 )
 
             # convergence criteria
             if norm_delta < precision:
-                converging, completed = False, True
+                converging, success = False, True
             elif previous_ll != 0 and abs(ll - previous_ll) / (-previous_ll) < 1e-09:
                 # this is what R uses by default
-                converging, completed = False, True
+                converging, success = False, True
             elif newton_decrement < precision:
-                converging, completed = False, True
+                converging, success = False, True
             elif i >= max_steps:
                 # 50 iterations steps with N-R is a lot.
                 # Expected convergence is ~10 steps
-                converging, completed = False, False
+                converging, success = False, False
             elif step_size <= 0.00001:
-                converging, completed = False, False
+                converging, success = False, False
             elif abs(ll) < 0.0001 and norm_delta > 1.0:
                 warnings.warn(
                     "The log-likelihood is getting suspiciously close to 0 and the delta is still large. There may be complete separation in the dataset. This may result in incorrect inference of coefficients. \
-See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-separation-in-logistic-regression",
+See https://stats.stackexchange.com/q/11109/11867 for more.\n",
                     ConvergenceWarning,
                 )
-                converging, completed = False, False
-
-            beta += step_size * delta
+                converging, success = False, False
 
             previous_ll = ll
             step_size = step_sizer.update(norm_delta).next()
@@ -554,34 +577,30 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
         self._score_ = gradient
         self.log_likelihood_ = ll
 
-        if show_progress and completed:
-            print("Convergence completed after %d iterations." % (i))
-        elif show_progress and not completed:
+        if show_progress and success:
+            print("Convergence success after %d iterations." % (i))
+        elif show_progress and not success:
             print("Convergence failed. See any warning messages.")
 
         # report to the user problems that we detect.
-        if completed and norm_delta > 0.1:
+        if success and norm_delta > 0.1:
+            self._check_values_post_fitting(X, T, E, weights)
             warnings.warn(
-                "Newton-Rhaphson convergence completed but norm(delta) is still high, %.3f. This may imply non-unique solutions to the maximum likelihood. Perhaps there is collinearity or complete separation in the dataset?"
+                "Newton-Rhaphson convergence completed successfully but norm(delta) is still high, %.3f. This may imply non-unique solutions to the maximum likelihood. Perhaps there is collinearity or complete separation in the dataset?\n"
                 % norm_delta,
                 ConvergenceWarning,
             )
-        elif not completed:
+        elif not success:
+            self._check_values_post_fitting(X, T, E, weights)
             warnings.warn(
-                "Newton-Rhaphson failed to converge sufficiently in %d steps." % max_steps, ConvergenceWarning
+                "Newton-Rhaphson failed to converge sufficiently in %d steps.\n" % max_steps, ConvergenceWarning
             )
 
         return beta
 
-    @property
-    def _log_likelihood(self):
-        warnings.warn(
-            "Please use `log_likelihood` property instead. `_log_likelihood` will be removed in a future version of lifelines",
-            DeprecationWarning,
-        )
-        return self.log_likelihood_
-
-    def _get_efron_values_single(self, X, T, E, weights, beta):
+    def _get_efron_values_single(
+        self, X: ndarray, T: ndarray, E: ndarray, weights: ndarray, beta: ndarray
+    ) -> Tuple[ndarray, ndarray, float]:
         """
         Calculates the first and second order vector differentials, with respect to beta.
         Note that X, T, E are assumed to be sorted on T!
@@ -675,14 +694,14 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
                 # Only censored with current time, move on
                 continue
 
-            # There was atleast one event and no more ties remain. Time to sum.
+            # There was at least one event and no more ties remain. Time to sum.
             # This code is near identical to the _batch algorithm below. In fact, see _batch for comments.
             weighted_average = weight_count / tied_death_counts
 
             if tied_death_counts > 1:
                 increasing_proportion = np.arange(tied_death_counts) / tied_death_counts
                 denom = 1.0 / (risk_phi - increasing_proportion * tie_phi)
-                numer = risk_phi_x - np.outer(increasing_proportion, tie_phi_x)
+                numer = risk_phi_x - np.multiply.outer(increasing_proportion, tie_phi_x)
                 a1 = np.einsum("ab,i->ab", risk_phi_x_x, denom) - np.einsum(
                     "ab,i->ab", tie_phi_x_x, increasing_proportion * denom
                 )
@@ -732,17 +751,17 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
             # Calculate the sums of Tie set
             deaths = E[slice_]
 
-            tied_death_counts = deaths.astype(int).sum()
+            tied_death_counts = deaths.sum()
             if tied_death_counts == 0:
                 # no deaths, can continue
                 pos -= count_of_removals
                 continue
 
-            weights_deaths = weights_at_t[deaths]
+            weights_deaths = weights_at_t[-tied_death_counts:]
             weight_count = weights_deaths.sum()
 
             if tied_death_counts > 1:
-                tie_phi = phi_i[deaths].sum()
+                tie_phi = phi_i[-tied_death_counts:].sum()
                 factor = np.log(risk_phi - np.arange(tied_death_counts) * tie_phi / tied_death_counts).sum()
             else:
                 factor = np.log(risk_phi)
@@ -805,7 +824,9 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
             tie_phi = 0
         return log_lik
 
-    def _get_efron_values_batch(self, X, T, E, weights, beta):  # pylint: disable=too-many-locals
+    def _get_efron_values_batch(
+        self, X: ndarray, T: ndarray, E: ndarray, weights: ndarray, beta: ndarray
+    ) -> Tuple[ndarray, ndarray, float]:  # pylint: disable=too-many-locals
         """
         Assumes sorted on ascending on T
         Calculates the first and second order vector differentials, with respect to beta.
@@ -845,7 +866,7 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
 
             X_at_t = X[slice_]
             weights_at_t = weights[slice_]
-            deaths = E[slice_]
+            tied_death_counts = E[slice_].sum()
 
             phi_i = scores[slice_, None]
             phi_x_i = phi_i * X_at_t
@@ -857,18 +878,14 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
             risk_phi_x_x = risk_phi_x_x + phi_x_x_i
 
             # Calculate the sums of Tie set
-            tied_death_counts = deaths.sum()
             if tied_death_counts == 0:
                 # no deaths, can continue
                 pos -= count_of_removals
                 continue
 
-            """
-            I think there is another optimization that can be made if we sort on
-            T and E. Using some accounting, we can skip all the [death] indexing below.
-            """
-            xi_deaths = X_at_t[deaths]
-            weights_deaths = weights_at_t[deaths]
+            # corresponding deaths are sorted like [False, False, False, ..., True, ....] because we sorted early in preprocessing
+            xi_deaths = X_at_t[-tied_death_counts:]
+            weights_deaths = weights_at_t[-tied_death_counts:]
 
             x_death_sum = np.einsum("a,ab->b", weights_deaths, xi_deaths)
 
@@ -881,14 +898,14 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
                 # https://github.com/CamDavidsonPilon/lifelines/blob/e7056e7817272eb5dff5983556954f56c33301b1/lifelines/fitters/coxph_fitter.py#L755-L789
 
                 # it's faster if we can skip computing these when we don't need to.
-                phi_x_i_deaths = phi_x_i[deaths]
-                tie_phi = phi_i[deaths].sum()
+                phi_x_i_deaths = phi_x_i[-tied_death_counts:]
+                tie_phi = phi_i[-tied_death_counts:].sum()
                 tie_phi_x = (phi_x_i_deaths).sum(0)
                 tie_phi_x_x = np.dot(xi_deaths.T, phi_x_i_deaths)
 
                 increasing_proportion = ZERO_TO_N[:tied_death_counts] / tied_death_counts
+                numer = risk_phi_x - np.multiply.outer(increasing_proportion, tie_phi_x)
                 denom = 1.0 / (risk_phi - increasing_proportion * tie_phi)
-                numer = risk_phi_x - np.outer(increasing_proportion, tie_phi_x)
 
                 # computes outer products and sums them together.
                 # Naive approach is to
@@ -902,8 +919,8 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
                 )
             else:
                 # no tensors here, but do some casting to make it easier in the converging step next.
-                denom = 1.0 / np.array([risk_phi])
                 numer = risk_phi_x
+                denom = 1.0 / np.array([risk_phi])
                 a1 = risk_phi_x_x * denom
 
             summand = numer * denom[:, None]
@@ -919,7 +936,7 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
 
         return hessian, gradient, log_lik
 
-    def _partition_by_strata(self, X, T, E, weights, as_dataframes=False):
+    def _partition_by_strata(self, X: DataFrame, T: Series, E: Series, weights: Series, as_dataframes: bool = False):
         for stratum, stratified_X in X.groupby(self.strata):
             stratified_E, stratified_T, stratified_W = (E.loc[[stratum]], T.loc[[stratum]], weights.loc[[stratum]])
             if not as_dataframes:
@@ -927,11 +944,15 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
             else:
                 yield (stratified_X, stratified_T, stratified_E, stratified_W), stratum
 
-    def _partition_by_strata_and_apply(self, X, T, E, weights, function, *args):
+    def _partition_by_strata_and_apply(
+        self, X: DataFrame, T: Series, E: Series, weights: Series, function: Callable, *args
+    ):
         for (stratified_X, stratified_T, stratified_E, stratified_W), _ in self._partition_by_strata(X, T, E, weights):
             yield function(stratified_X, stratified_T, stratified_E, stratified_W, *args)
 
-    def _compute_martingale(self, X, T, E, _weights, index=None):
+    def _compute_martingale(
+        self, X: DataFrame, T: Series, E: Series, _weights: Series, index: Optional[Index] = None
+    ) -> pd.DataFrame:
         # TODO: _weights unused
         partial_hazard = self.predict_partial_hazard(X)[0].values
 
@@ -947,7 +968,9 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
             {self.duration_col: T.values, self.event_col: E.values, "martingale": martingale.values}, index=index
         )
 
-    def _compute_deviance(self, X, T, E, weights, index=None):
+    def _compute_deviance(
+        self, X: DataFrame, T: Series, E: Series, weights: Series, index: Optional[Index] = None
+    ) -> pd.DataFrame:
         df = self._compute_martingale(X, T, E, weights, index)
         rmart = df.pop("martingale")
 
@@ -959,7 +982,9 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
         df["deviance"] = deviance
         return df
 
-    def _compute_scaled_schoenfeld(self, X, T, E, weights, index=None):
+    def _compute_scaled_schoenfeld(
+        self, X: DataFrame, T: Series, E: Series, weights: Series, index: Optional[Index] = None
+    ) -> pd.DataFrame:
         r"""
         Let s_k be the kth schoenfeld residuals. Then E[s_k] = 0.
         For tests of proportionality, we want to test if \beta_i(t) is \beta_i (constant) or not.
@@ -987,7 +1012,9 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
         scaled_schoenfeld_resids.columns = self.params_.index
         return scaled_schoenfeld_resids
 
-    def _compute_schoenfeld(self, X, T, E, weights, index=None):
+    def _compute_schoenfeld(
+        self, X: pd.DataFrame, T: pd.Series, E: pd.Series, weights: pd.Series, index: pd.Index
+    ) -> pd.DataFrame:
         # TODO: should the index by times, i.e. T[E]?
 
         # Assumes sorted on T and on strata
@@ -1010,7 +1037,7 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
         df = pd.DataFrame(schoenfeld_residuals[E, :], columns=self.params_.index, index=index[E])
         return df
 
-    def _compute_schoenfeld_within_strata(self, X, T, E, weights):
+    def _compute_schoenfeld_within_strata(self, X: ndarray, T: ndarray, E: ndarray, weights: ndarray) -> ndarray:
         """
         A positive value of the residual shows an X value that is higher than expected at that death time.
         """
@@ -1097,7 +1124,9 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
 
         return schoenfeld_residuals[::-1]
 
-    def _compute_delta_beta(self, X, T, E, weights, index=None):
+    def _compute_delta_beta(
+        self, X: DataFrame, T: Series, E: Series, weights: Series, index: Optional[Index] = None
+    ) -> pd.DataFrame:
         """
         approximate change in betas as a result of excluding ith row. Good for finding outliers / specific
         subjects that influence the model disproportionately. Good advice: don't drop these outliers, model them.
@@ -1112,7 +1141,9 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
 
         return delta_betas
 
-    def _compute_score(self, X, T, E, weights, index=None):
+    def _compute_score(
+        self, X: DataFrame, T: Series, E: Series, weights: Series, index: Optional[Index] = None
+    ) -> pd.DataFrame:
 
         _, d = X.shape
 
@@ -1129,7 +1160,9 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
 
         return pd.DataFrame(score_residuals, columns=self.params_.index, index=index)
 
-    def _compute_score_within_strata(self, X, _T, E, weights):
+    def _compute_score_within_strata(
+        self, X: ndarray, _T: Union[ndarray, Series], E: ndarray, weights: ndarray
+    ) -> ndarray:
         # https://www.stat.tamu.edu/~carroll/ftp/gk001.pdf
         # lin1989
         # https://www.ics.uci.edu/~dgillen/STAT255/Handouts/lecture10.pdf
@@ -1173,12 +1206,12 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
 
         return score_residuals * weights[:, None]
 
-    def compute_residuals(self, training_dataframe, kind):
+    def compute_residuals(self, training_dataframe: DataFrame, kind: str) -> pd.DataFrame:
         """
 
         Parameters
         ----------
-        training_dataframe : pandas DataFrame
+        training_dataframe : DataFrame
             the same training DataFrame given in `fit`
         kind : string
             {'schoenfeld', 'score', 'delta_beta', 'deviance', 'martingale', 'scaled_schoenfeld'}
@@ -1193,7 +1226,7 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
         resids = getattr(self, "_compute_%s" % kind)(X, T, E, weights, index=shuffled_original_index)
         return resids
 
-    def _compute_confidence_intervals(self):
+    def _compute_confidence_intervals(self) -> pd.DataFrame:
         ci = 100 * (1 - self.alpha)
         z = inv_normal_cdf(1 - self.alpha / 2)
         se = self.standard_errors_
@@ -1204,14 +1237,16 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
             index=self.params_.index,
         )
 
-    def _compute_standard_errors(self, X, T, E, weights):
+    def _compute_standard_errors(
+        self, X: Optional[DataFrame], T: Optional[Series], E: Optional[Series], weights: Optional[Series]
+    ) -> pd.Series:
         if self.robust or self.cluster_col:
             se = np.sqrt(self._compute_sandwich_estimator(X, T, E, weights).diagonal())
         else:
             se = np.sqrt(self.variance_matrix_.diagonal())
         return pd.Series(se, name="se", index=self.params_.index)
 
-    def _compute_sandwich_estimator(self, X, T, E, weights):
+    def _compute_sandwich_estimator(self, X: DataFrame, T: Series, E: Series, weights: Series) -> ndarray:
         delta_betas = self._compute_delta_beta(X, T, E, weights)
 
         if self.cluster_col:
@@ -1221,15 +1256,15 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
 
         return sandwich_estimator.values
 
-    def _compute_z_values(self):
+    def _compute_z_values(self) -> Series:
         return self.params_ / self.standard_errors_
 
-    def _compute_p_values(self):
+    def _compute_p_values(self) -> ndarray:
         U = self._compute_z_values() ** 2
         return stats.chi2.sf(U, 1)
 
     @property
-    def summary(self):
+    def summary(self) -> pd.DataFrame:
         """Summary statistics describing the fit.
         Set alpha property in the object before calling.
 
@@ -1239,7 +1274,7 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
             Contains columns coef, np.exp(coef), se(coef), z, p, lower, upper"""
         ci = 100 * (1 - self.alpha)
         z = inv_normal_cdf(1 - self.alpha / 2)
-        with np.errstate(invalid="ignore", divide="ignore"):
+        with np.errstate(invalid="ignore", divide="ignore", over="ignore", under="ignore"):
             df = pd.DataFrame(index=self.params_.index)
             df["coef"] = self.params_
             df["exp(coef)"] = self.hazard_ratios_
@@ -1253,7 +1288,7 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
             df["-log2(p)"] = -np.log2(df["p"])
             return df
 
-    def print_summary(self, decimals=2, **kwargs):
+    def print_summary(self, decimals: int = 2, style: Optional[str] = None, **kwargs) -> None:
         """
         Print summary statistics describing the fit, the coefficients, and the error bounds.
 
@@ -1261,6 +1296,8 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
         -----------
         decimals: int, optional (default=2)
             specify the number of decimal places to show
+        style: string
+            {html, ascii, latex}
         kwargs:
             print additional metadata in the output (useful to provide model names, dataset names, etc.) when comparing
             multiple outputs.
@@ -1270,80 +1307,36 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
         # Print information about data first
         justify = string_justify(25)
 
-        print(self)
-        print("{} = '{}'".format(justify("duration col"), self.duration_col))
+        headers: List[Tuple[str, Any]] = []
+        headers.append(("duration col", "'%s'" % self.duration_col))
 
         if self.event_col:
-            print("{} = '{}'".format(justify("event col"), self.event_col))
+            headers.append(("event col", "'%s'" % self.event_col))
         if self.weights_col:
-            print("{} = '{}'".format(justify("weights col"), self.weights_col))
-
+            headers.append(("weights col", "'%s'" % self.weights_col))
         if self.cluster_col:
-            print("{} = '{}'".format(justify("cluster col"), self.cluster_col))
-
-        if self.robust or self.cluster_col:
-            print("{} = {}".format(justify("robust variance"), True))
-
-        if self.strata:
-            print("{} = {}".format(justify("strata"), self.strata))
-
+            headers.append(("cluster col", "'%s'" % self.cluster_col))
         if self.penalizer > 0:
-            print("{} = {}".format(justify("penalizer"), self.penalizer))
+            headers.append(("penalizer", self.penalizer))
+        if self.robust or self.cluster_col:
+            headers.append(("robust variance", True))
+        if self.strata:
+            headers.append(("strata", self.strata))
 
-        print("{} = {:g}".format(justify("number of observations"), self.weights.sum()))
-        print("{} = {:g}".format(justify("number of events observed"), self.weights[self.event_observed > 0].sum()))
-        print("{} = {:.{prec}f}".format(justify("partial log-likelihood"), self.log_likelihood_, prec=decimals))
-        print("{} = {}".format(justify("time fit was run"), self._time_fit_was_called))
-
-        for k, v in kwargs.items():
-            print("{} = {}\n".format(justify(k), v))
-
-        print(end="\n")
-        print("---")
-
-        df = self.summary
-        df.columns = [leading_space(c) for c in df.columns]
-        ci = 100 * (1 - self.alpha)
-        print(
-            df.to_string(
-                float_format=format_floats(decimals),
-                formatters={
-                    leading_space("exp(coef)"): format_exp_floats(decimals),
-                    leading_space("exp(coef) lower %g%%" % ci): format_exp_floats(decimals),
-                    leading_space("exp(coef) upper %g%%" % ci): format_exp_floats(decimals),
-                },
-                columns=[
-                    leading_space("coef"),
-                    leading_space("exp(coef)"),
-                    leading_space("se(coef)"),
-                    leading_space("coef lower %g%%" % ci),
-                    leading_space("coef upper %g%%" % ci),
-                    leading_space("exp(coef) lower %g%%" % ci),
-                    leading_space("exp(coef) upper %g%%" % ci),
-                ],
-            )
-        )
-        print()
-        print(
-            df.to_string(
-                float_format=format_floats(decimals),
-                formatters={leading_space("p"): format_p_value(decimals)},
-                columns=[leading_space("z"), leading_space("p"), leading_space("-log2(p)")],
-            )
+        headers.extend(
+            [
+                ("number of observations", "{:g}".format(self.weights.sum())),
+                ("number of events observed", "{:g}".format(self.weights[self.event_observed > 0].sum())),
+                ("partial log-likelihood", "{:.{prec}f}".format(self.log_likelihood_, prec=decimals)),
+                ("time fit was run", self._time_fit_was_called),
+            ]
         )
 
-        # Significance code explanation
-        print("---")
-        print("Concordance = {:.{prec}f}".format(self.score_, prec=decimals))
-        with np.errstate(invalid="ignore", divide="ignore"):
-            sr = self.log_likelihood_ratio_test()
-            print(
-                "Log-likelihood ratio test = {:.{prec}f} on {} df, -log2(p)={:.{prec}f}".format(
-                    sr.test_statistic, sr.degrees_freedom, -np.log2(sr.p_value), prec=decimals
-                )
-            )
+        p = Printer(headers, self, justify, decimals, kwargs)
 
-    def log_likelihood_ratio_test(self):
+        p.print(style=style)
+
+    def log_likelihood_ratio_test(self) -> StatisticalResult:
         """
         This function computes the likelihood ratio test for the Cox model. We
         compare the existing model (with all the covariates) to the trivial model
@@ -1363,7 +1356,7 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
         ll_alt = self.log_likelihood_
         test_stat = 2 * ll_alt - 2 * ll_null
         degrees_freedom = self.params_.shape[0]
-        p_value = chisq_test(test_stat, degrees_freedom=degrees_freedom)
+        p_value = _chisq_test_p_value(test_stat, degrees_freedom=degrees_freedom)
         return StatisticalResult(
             p_value,
             test_stat,
@@ -1372,20 +1365,17 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
             degrees_freedom=degrees_freedom,
         )
 
-    def predict_partial_hazard(self, X):
+    def predict_partial_hazard(self, X: Union[ndarray, DataFrame]) -> pd.DataFrame:
         r"""
+        Returns the partial hazard for the individuals, partial since the
+        baseline hazard is not included. Equal to :math:`\exp{(x - mean(x_{train}))'\beta}`
+
         Parameters
         ----------
         X: numpy array or DataFrame
             a (n,d) covariate numpy array or DataFrame. If a DataFrame, columns
             can be in any order. If a numpy array, columns must be in the
             same order as the training data.
-
-        Returns
-        -------
-        partial_hazard: DataFrame
-            Returns the partial hazard for the individuals, partial since the
-            baseline hazard is not included. Equal to :math:`\exp{(x - mean(x_{train}))'\beta}`
 
         Notes
         -----
@@ -1395,7 +1385,7 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
         """
         return np.exp(self.predict_log_partial_hazard(X))
 
-    def predict_log_partial_hazard(self, X):
+    def predict_log_partial_hazard(self, X: Union[ndarray, DataFrame]) -> pd.DataFrame:
         r"""
         This is equivalent to R's linear.predictors.
         Returns the log of the partial hazard for the individuals, partial since the
@@ -1408,11 +1398,6 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
             a (n,d) covariate numpy array or DataFrame. If a DataFrame, columns
             can be in any order. If a numpy array, columns must be in the
             same order as the training data.
-
-        Returns
-        -------
-        log_partial_hazard: DataFrame
-
 
         Notes
         -----
@@ -1443,7 +1428,12 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
         X = normalize(X, self._norm_mean.values, 1)
         return pd.DataFrame(np.dot(X, self.params_), index=index)
 
-    def predict_cumulative_hazard(self, X, times=None, conditional_after=None):
+    def predict_cumulative_hazard(
+        self,
+        X: Union[Series, DataFrame],
+        times: Optional[Union[ndarray, List[float]]] = None,
+        conditional_after: Optional[List[int]] = None,
+    ) -> pd.DataFrame:
         """
         Parameters
         ----------
@@ -1459,13 +1449,9 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
         conditional_after: iterable, optional
             Must be equal is size to X.shape[0] (denoted `n` above).  An iterable (array, list, series) of possibly non-zero values that represent how long the
             subject has already lived for. Ex: if :math:`T` is the unknown event time, then this represents
-            :math`T | T > s`. This is useful for knowing the *remaining* hazard/survival of censored subjects.
+            :math:`T | T > s`. This is useful for knowing the *remaining* hazard/survival of censored subjects.
             The new timeline is the remaining duration of the subject, i.e. reset back to starting at 0.
 
-        Returns
-        -------
-        cumulative_hazard_ : DataFrame
-            the cumulative hazard of individuals over the timeline
         """
         if isinstance(X, pd.Series):
             return self.predict_cumulative_hazard(X.to_frame().T, times=times, conditional_after=conditional_after)
@@ -1478,7 +1464,11 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
             conditional_after = _to_1d_array(conditional_after).reshape(n, 1)
 
         if self.strata:
+            X = X.copy()
             cumulative_hazard_ = pd.DataFrame()
+            if conditional_after is not None:
+                X["_conditional_after"] = conditional_after
+
             for stratum, stratified_X in X.groupby(self.strata):
                 try:
                     strata_c_0 = self.baseline_cumulative_hazard_[[stratum]]
@@ -1495,10 +1485,11 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
                 times_ = coalesce(times, self.baseline_cumulative_hazard_.index)
                 n_ = stratified_X.shape[0]
                 if conditional_after is not None:
-                    times_to_evaluate_at = np.tile(times_, (n_, 1)) + conditional_after
+                    conditional_after_ = stratified_X.pop("_conditional_after")[:, None]
+                    times_to_evaluate_at = np.tile(times_, (n_, 1)) + conditional_after_
 
                     c_0_ = interpolate_at_times(strata_c_0, times_to_evaluate_at)
-                    c_0_conditional_after = interpolate_at_times(strata_c_0, conditional_after)
+                    c_0_conditional_after = interpolate_at_times(strata_c_0, conditional_after_)
                     c_0_ = np.clip((c_0_ - c_0_conditional_after).T, 0, np.inf)
 
                 else:
@@ -1532,7 +1523,12 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
 
         return cumulative_hazard_
 
-    def predict_survival_function(self, X, times=None, conditional_after=None):
+    def predict_survival_function(
+        self,
+        X: Union[Series, DataFrame],
+        times: Optional[Union[List[float], ndarray]] = None,
+        conditional_after: Optional[List[int]] = None,
+    ) -> pd.DataFrame:
         """
         Predict the survival function for individuals, given their covariates. This assumes that the individual
         just entered the study (that is, we do not condition on how long they have already lived for.)
@@ -1551,18 +1547,15 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
         conditional_after: iterable, optional
             Must be equal is size to X.shape[0] (denoted `n` above).  An iterable (array, list, series) of possibly non-zero values that represent how long the
             subject has already lived for. Ex: if :math:`T` is the unknown event time, then this represents
-            :math`T | T > s`. This is useful for knowing the *remaining* hazard/survival of censored subjects.
+            :math:`T | T > s`. This is useful for knowing the *remaining* hazard/survival of censored subjects.
             The new timeline is the remaining duration of the subject, i.e. normalized back to starting at 0.
 
-
-        Returns
-        -------
-        survival_function : DataFrame
-            the survival probabilities of individuals over the timeline
         """
         return np.exp(-self.predict_cumulative_hazard(X, times=times, conditional_after=conditional_after))
 
-    def predict_percentile(self, X, p=0.5, conditional_after=None):
+    def predict_percentile(
+        self, X: DataFrame, p: float = 0.5, conditional_after: Optional[ndarray] = None
+    ) -> pd.DataFrame:
         """
         Returns the median lifetimes for the individuals, by default. If the survival curve of an
         individual does not cross 0.5, then the result is infinity.
@@ -1579,12 +1572,8 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
         conditional_after: iterable, optional
             Must be equal is size to X.shape[0] (denoted `n` above).  An iterable (array, list, series) of possibly non-zero values that represent how long the
             subject has already lived for. Ex: if :math:`T` is the unknown event time, then this represents
-            :math`T | T > s`. This is useful for knowing the *remaining* hazard/survival of censored subjects.
+            :math:`T | T > s`. This is useful for knowing the *remaining* hazard/survival of censored subjects.
             The new timeline is the remaining duration of the subject, i.e. normalized back to starting at 0.
-
-        Returns
-        -------
-        percentiles: DataFrame
 
         See Also
         --------
@@ -1594,7 +1583,7 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
         subjects = _get_index(X)
         return qth_survival_times(p, self.predict_survival_function(X, conditional_after=conditional_after)[subjects]).T
 
-    def predict_median(self, X, conditional_after=None):
+    def predict_median(self, X: DataFrame, conditional_after: Optional[ndarray] = None) -> pd.DataFrame:
         """
         Predict the median lifetimes for the individuals. If the survival curve of an
         individual does not cross 0.5, then the result is infinity.
@@ -1605,12 +1594,11 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
             a (n,d) covariate numpy array or DataFrame. If a DataFrame, columns
             can be in any order. If a numpy array, columns must be in the
             same order as the training data.
-
-        Returns
-        -------
-        percentiles: DataFrame
-            the median lifetimes for the individuals. If the survival curve of an
-            individual does not cross 0.5, then the result is infinity.
+        conditional_after: iterable, optional
+            Must be equal is size to X.shape[0] (denoted `n` above).  An iterable (array, list, series) of possibly non-zero values that represent how long the
+            subject has already lived for. Ex: if :math:`T` is the unknown event time, then this represents
+            :math:`T | T > s`. This is useful for knowing the *remaining* hazard/survival of censored subjects.
+            The new timeline is the remaining duration of the subject, i.e. normalized back to starting at 0.
 
 
         See Also
@@ -1620,14 +1608,14 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
         """
         return self.predict_percentile(X, 0.5, conditional_after=conditional_after)
 
-    def predict_expectation(self, X):
+    def predict_expectation(self, X: DataFrame, conditional_after: Optional[ndarray] = None) -> pd.DataFrame:
         r"""
         Compute the expected lifetime, :math:`E[T]`, using covariates X. This algorithm to compute the expectation is
         to use the fact that :math:`E[T] = \int_0^\inf P(T > t) dt = \int_0^\inf S(t) dt`. To compute the integral, we use the trapizoidal rule to approximate the integral.
 
         Caution
         --------
-        However, if the survival function doesn't converge to 0, the the expectation is really infinity and the returned
+        If the survival function doesn't converge to 0, the the expectation is really infinity and the returned
         values are meaningless/too large. In that case, using ``predict_median`` or ``predict_percentile`` would be better.
 
         Parameters
@@ -1637,10 +1625,11 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
             a (n,d) covariate numpy array or DataFrame. If a DataFrame, columns
             can be in any order. If a numpy array, columns must be in the
             same order as the training data.
-
-        Returns
-        -------
-        expectations : DataFrame
+        conditional_after: iterable, optional
+            Must be equal is size to X.shape[0] (denoted `n` above).  An iterable (array, list, series) of possibly non-zero values that represent how long the
+            subject has already lived for. Ex: if :math:`T` is the unknown event time, then this represents
+            :math:`T | T > s`. This is useful for knowing the *remaining* hazard/survival of censored subjects.
+            The new timeline is the remaining duration of the subject, i.e. normalized back to starting at 0.
 
         Notes
         -----
@@ -1655,10 +1644,10 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
 
         """
         subjects = _get_index(X)
-        v = self.predict_survival_function(X)[subjects]
+        v = self.predict_survival_function(X, conditional_after=conditional_after)[subjects]
         return pd.DataFrame(trapz(v.values.T, v.index), index=subjects)
 
-    def _compute_baseline_hazard(self, partial_hazards, name):
+    def _compute_baseline_hazard(self, partial_hazards: DataFrame, name: Any) -> DataFrame:
         # https://stats.stackexchange.com/questions/46532/cox-baseline-hazard
         ind_hazards = partial_hazards.copy()
         ind_hazards["P"] *= ind_hazards["W"]
@@ -1671,7 +1660,7 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
         baseline_hazard.index.name = None
         return baseline_hazard
 
-    def _compute_baseline_hazards(self):
+    def _compute_baseline_hazards(self) -> pd.DataFrame:
         if self.strata:
 
             index = self.durations.unique()
@@ -1688,13 +1677,13 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
 
         return self._compute_baseline_hazard(self._predicted_partial_hazards_, name="baseline hazard")
 
-    def _compute_baseline_cumulative_hazard(self):
+    def _compute_baseline_cumulative_hazard(self) -> DataFrame:
         cumulative = self.baseline_hazard_.cumsum()
         if not self.strata:
             cumulative = cumulative.rename(columns={"baseline hazard": "baseline cumulative hazard"})
         return cumulative
 
-    def _compute_baseline_survival(self):
+    def _compute_baseline_survival(self) -> pd.DataFrame:
         """
         Importantly, this agrees with what the KaplanMeierFitter produces. Ex:
 
@@ -1910,8 +1899,14 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
         return axes
 
     def check_assumptions(
-        self, training_df, advice=True, show_plots=False, p_value_threshold=0.01, plot_n_bootstraps=10, columns=None
-    ):
+        self,
+        training_df: DataFrame,
+        advice: bool = True,
+        show_plots: bool = False,
+        p_value_threshold: float = 0.01,
+        plot_n_bootstraps: int = 10,
+        columns: Optional[List[str]] = None,
+    ) -> None:
         """
         Use this function to test the proportional hazards assumption. See usage example at
         https://lifelines.readthedocs.io/en/latest/jupyter_notebooks/Proportional%20hazard%20assumption.html
@@ -2053,9 +2048,7 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
                     )
                     print(
                         fill(
-                            """   Advice 3: try adding an interaction term with your time variable. See documentation in link [C] below.""".format(
-                                var=variable
-                            ),
+                            """   Advice 3: try adding an interaction term with your time variable. See documentation in link [C] below.""",
                             width=100,
                         ),
                         end="\n\n",
@@ -2116,7 +2109,7 @@ See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-sep
             print("Proportional hazard assumption looks okay.")
 
     @property
-    def score_(self):
+    def score_(self) -> float:
         """
         The concordance score (also known as the c-index) of the fit.  The c-index is a generalization of the ROC AUC
         to survival data, including censorships.

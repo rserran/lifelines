@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 import numpy as np
-from lifelines.fitters import KnownModelParametericUnivariateFitter
+from lifelines.fitters import KnownModelParametricUnivariateFitter
 
 
-class ExponentialFitter(KnownModelParametericUnivariateFitter):
+class ExponentialFitter(KnownModelParametricUnivariateFitter):
     r"""
     This class implements an Exponential model for univariate data. The model has parameterized
     form:
@@ -18,7 +18,7 @@ class ExponentialFitter(KnownModelParametericUnivariateFitter):
 
     .. math::  h(t) = \frac{1}{\lambda}
 
-    After calling the `.fit` method, you have access to properties like: ``survival_function_``, ``lambda_``, ``cumulative_hazard_``
+    After calling the ``.fit`` method, you have access to properties like: ``survival_function_``, ``lambda_``, ``cumulative_hazard_``
     A summary of the fit is available with the method ``print_summary()``
 
     Parameters
@@ -47,7 +47,7 @@ class ExponentialFitter(KnownModelParametericUnivariateFitter):
         The lower and upper confidence intervals for the survival function
     variance_matrix_ : numpy array
         The variance matrix of the coefficients
-    median_: float
+    median_survival_time_: float
         The median time to event
     lambda_: float
         The fitted parameter in the model

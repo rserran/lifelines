@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 import autograd.numpy as np
 
-from lifelines.fitters import KnownModelParametericUnivariateFitter
+from lifelines.fitters import KnownModelParametricUnivariateFitter
 from lifelines.utils import CensoringType
 
 
-class LogLogisticFitter(KnownModelParametericUnivariateFitter):
+class LogLogisticFitter(KnownModelParametricUnivariateFitter):
 
     r"""
     This class implements a Log-Logistic model for univariate data. The model has parameterized
@@ -13,7 +13,12 @@ class LogLogisticFitter(KnownModelParametericUnivariateFitter):
 
     .. math::  S(t) = \left(1 + \left(\frac{t}{\alpha}\right)^{\beta}\right)^{-1},   \alpha > 0, \beta > 0,
 
-    and the hazard rate is:
+    The :math:`\alpha` (scale) parameter has an interpretation as being equal to the *median* lifetime of the population. The
+    :math:`\beta` parameter influences the shape of the hazard. See figure below:
+
+    .. image:: images/log_normal_alpha.png
+
+    The hazard rate is:
 
     .. math::  h(t) = \frac{\left(\frac{\beta}{\alpha}\right)\left(\frac{t}{\alpha}\right) ^ {\beta-1}}{\left(1 + \left(\frac{t}{\alpha}\right)^{\beta}\right)}
 
@@ -21,7 +26,7 @@ class LogLogisticFitter(KnownModelParametericUnivariateFitter):
 
     .. math:: H(t) = \log\left(\left(\frac{t}{\alpha}\right) ^ {\beta} + 1\right)
 
-    After calling the `.fit` method, you have access to properties like: ``cumulative_hazard_``, ``plot``, ``survival_function_``, ``alpha_`` and ``beta_``.
+    After calling the ``.fit`` method, you have access to properties like: ``cumulative_hazard_``, ``plot``, ``survival_function_``, ``alpha_`` and ``beta_``.
     A summary of the fit is available with the method 'print_summary()'
 
     Parameters
@@ -52,7 +57,7 @@ class LogLogisticFitter(KnownModelParametericUnivariateFitter):
         The estimated cumulative density function (with custom timeline if provided)
     variance_matrix_ : numpy array
         The variance matrix of the coefficients
-    median_: float
+    median_survival_time_: float
         The median time to event
     alpha_: float
         The fitted parameter in the model
@@ -68,6 +73,7 @@ class LogLogisticFitter(KnownModelParametericUnivariateFitter):
         The entry array provided, or None
     """
     _fitted_parameter_names = ["alpha_", "beta_"]
+    _compare_to_values = np.array([1.0, 1.0])
 
     def percentile(self, p):
         a = self.alpha_
@@ -84,7 +90,7 @@ class LogLogisticFitter(KnownModelParametericUnivariateFitter):
         return np.array([np.median(T), 1.0])
 
     @property
-    def median_(self):
+    def median_survival_time_(self):
         return self.alpha_
 
     def _cumulative_hazard(self, params, times):
