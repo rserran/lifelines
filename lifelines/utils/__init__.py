@@ -32,6 +32,7 @@ __all__ = [
     "to_episodic_format",
     "add_covariate_to_timeline",
     "covariates_from_event_matrix",
+    "find_best_parametric_model",
 ]
 
 
@@ -467,7 +468,7 @@ def survival_table_from_events(
       and censorships.
     weights: (n,1) array, optional
       Optional argument to use weights for individuals. Assumes weights of 1 if not provided.
-    collapse: boolean, optional (default=False)
+    collapse: bool, optional (default=False)
       If True, collapses survival table into lifetable to show events in interval bins
     intervals: iterable, optional
       Default None, otherwise a list/(n,1) array of interval edge measures. If left as None
@@ -647,7 +648,7 @@ def datetimes_to_durations(
         of observation. Anything after this date is also censored.
     freq: string, optional (default='D')
         the units of time to use.  See Pandas 'freq'. Default 'D' for days.
-    dayfirst: boolean, optional (default=False)
+    dayfirst: bool, optional (default=False)
          convert assuming European-style dates, i.e. day/month/year.
     na_values : list, optional
         list of values to recognize as NA/NaN. Ex: ['', 'NaT']
@@ -1132,7 +1133,7 @@ def check_complete_separation_close_to_perfect_correlation(df: pd.DataFrame, dur
         df = df.sample(n=500, random_state=0)
         durations = durations.sample(n=500, random_state=0)
 
-    rank_durations = durations.values.argsort()
+    rank_durations = durations.argsort()
     for col, series in df.iteritems():
         with np.errstate(invalid="ignore", divide="ignore"):
             rank_series = series.values.argsort()
@@ -1147,7 +1148,7 @@ def check_complete_separation_close_to_perfect_correlation(df: pd.DataFrame, dur
 
 def check_complete_separation(df, events, durations, event_col):
     check_complete_separation_low_variance(df, events, event_col)
-    check_complete_separation_close_to_perfect_correlation(df, durations)
+    check_complete_separation_close_to_perfect_correlation(df, pd.Series(durations))
 
 
 def check_nans_or_infs(df_or_array):
@@ -1339,14 +1340,14 @@ def add_covariate_to_timeline(
         the column in cv that represents the time-since-birth the observation occurred at.
     event_col: string
         the column in df that represents if the event-of-interest occurred
-    add_enum: boolean, optional
+    add_enum: bool, optional
          a Boolean flag to denote whether to add a column enumerating rows per subject. Useful to specify a specific
         observation, ex: df[df['enum'] == 1] will grab the first observations per subject.
-    overwrite: boolean, optional
+    overwrite: bool, optional
         if True, covariate values in long_form_df will be overwritten by covariate values in cv if the column exists in both
         cv and long_form_df and the timestamps are identical. If False, the default behavior will be to sum
         the values together.
-    cumulative_sum: boolean, optional
+    cumulative_sum: bool, optional
         sum over time the new covariates. Makes sense if the covariates are new additions, and not state changes (ex:
         administering more drugs vs taking a temperature.)
     cumulative_sum_prefix: string, optional
@@ -1510,10 +1511,10 @@ class StepSizer:
     def __init__(self, initial_step_size: Optional[float]) -> None:
         initial_step_size = initial_step_size or 0.95
 
-        self.initial_step_size: float = initial_step_size
-        self.step_size: float = initial_step_size
-        self.temper_back_up: bool = False
-        self.norm_of_deltas: List[float] = []
+        self.initial_step_size = initial_step_size
+        self.step_size = initial_step_size
+        self.temper_back_up = False
+        self.norm_of_deltas = []
 
     def update(self, norm_of_delta: float) -> "StepSizer":
         SCALE = 1.2
@@ -1669,3 +1670,87 @@ class DataframeSliceDict:
     def iterdicts(self):
         for _, x in self.df.iterrows():
             yield DataframeSliceDict(x.to_frame().T, self.mappings)
+
+
+def find_best_parametric_model(event_times, event_observed=None, evaluation: str = "AIC", additional_models=None):
+    """
+    To quickly determine the best¹ univariate model, this function will iterate through each
+    parametric model available in lifelines and select the one that minimizes a particular measure of fit.
+
+    ¹Best, according to the measure of fit.
+
+    Parameters
+    -------------
+    event_times: list, np.ndarray, pd.Series
+        a (n,) array of observed survival times.
+    event_observed: list, np.ndarray, pd.Series
+        a (n,) array of censored flags, 1 if observed,  0 if not. Default None assumes all observed.
+    evaluation: string
+        one of {"AIC", "BIC"}
+
+    additional_models: list
+        list of other parametric models that implement the lifelines API.
+
+    Returns
+    ----------
+    tuple of fitted best_model and best_score
+
+    """
+    from lifelines import (
+        WeibullFitter,
+        ExponentialFitter,
+        LogNormalFitter,
+        LogLogisticFitter,
+        PiecewiseExponentialFitter,
+        GeneralizedGammaFitter,
+        SplineFitter,
+    )
+
+    if additional_models is None:
+        additional_models = []
+
+    evaluation_lookup = {
+        "AIC": lambda model: 2 * len(model._fitted_parameter_names) - 2 * model.log_likelihood_,
+        "BIC": lambda model: 2 * len(model._fitted_parameter_names) - 2 * model.log_likelihood_ * np.log(T.shape[0]),
+    }
+
+    eval = evaluation_lookup[evaluation]
+
+    if event_observed is None:
+        event_observed = np.ones_like(event_times, dtype=bool)
+
+    observed_T = event_times[event_observed.astype(bool)]
+    knots1 = np.percentile(observed_T, 100 * np.linspace(0.05, 0.95, 3))
+    knots2 = np.percentile(observed_T, 100 * np.linspace(0.05, 0.95, 4))
+    knots3 = np.percentile(observed_T, 100 * np.linspace(0.05, 0.95, 5))
+
+    best_model = None
+    best_score = np.inf
+
+    for model in [
+        WeibullFitter(),
+        ExponentialFitter(),
+        LogNormalFitter(),
+        LogLogisticFitter(),
+        PiecewiseExponentialFitter(knots1[1:-1], label="PiecewiseExponentialFitter: 1 breakpoint"),
+        PiecewiseExponentialFitter(knots2[1:-1], label="PiecewiseExponentialFitter: 2 breakpoint"),
+        PiecewiseExponentialFitter(knots3[1:-1], label="PiecewiseExponentialFitter: 3 breakpoint"),
+        GeneralizedGammaFitter(),
+        SplineFitter(knots1, label="SplineFitter: 1 internal knot"),
+        SplineFitter(knots2, label="SplineFitter: 2 internal knot"),
+        SplineFitter(knots3, label="SplineFitter: 3 internal knot"),
+    ] + additional_models:
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                model.fit(event_times, event_observed)
+            score_ = eval(model)
+
+            if score_ < best_score:
+                best_score = score_
+                best_model = model
+
+        except ConvergenceError:
+            continue
+
+    return best_model, best_score

@@ -1,6 +1,56 @@
 ## Changelog
 
-#### 0.23.2
+#### 0.23.9 - 2020-01-28
+
+##### Bug fixes
+ - fixed important error when a parametric regression model would not assign the correct labels to fitted
+parameters' variances. See more here: https://github.com/CamDavidsonPilon/lifelines/issues/931. Users of `GeneralizedGammaRegressionFitter` and any custom regression models should update their code as soon as possible.
+
+
+#### 0.23.8 - 2020-01-21
+
+##### Bug fixes
+ - fixed important error when a parametric regression model would not assign the correct labels to fitted
+parameters. See more here: https://github.com/CamDavidsonPilon/lifelines/issues/931. Users of `GeneralizedGammaRegressionFitter` and any custom regression models should update their code as soon as possible.
+
+#### 0.23.7 - 2020-01-14
+
+Bug fixes for py3.5.
+
+#### 0.23.6 - 2020-01-07
+
+##### New features
+ - New univariate model, `SplineFitter`, that uses cubic splines to model the cumulative hazard.
+ - To aid users with selecting the best parametric model, there is a new `lifelines.utils.find_best_parametric_model` function that will iterate through the models and return the model with the lowest AIC (by default).
+ - custom parametric regression models can now do left and interval censoring.
+
+
+#### 0.23.5 - 2020-01-05
+
+##### New features
+ - New `predict_hazard` for parametric regression models.
+ - New lymph node cancer dataset, originally from *H.F. for the German Breast Cancer Study Group (GBSG) (1994)*
+
+##### Bug fixes
+ - fixes error thrown when converge of regression models fails.
+ - `kwargs` is now used in `plot_covariate_groups`
+ - fixed bug where large exponential numbers in `print_summary` were not being suppressed correctly.
+
+#### 0.23.4 - 2019-12-15
+
+ - Bug fix for PyPI
+
+#### 0.23.3 - 2019-12-11
+
+##### New features
+ - `StatisticalResult.print_summary` supports html output.
+
+##### Bug fixes
+ - fix import in `printer.py`
+ - fix html printing with Univariate models.
+
+
+#### 0.23.2 - 2019-12-07
 
 ##### New features
  - new `lifelines.plotting.rmst_plot` for pretty figures of survival curves and RMSTs.
@@ -14,7 +64,7 @@
  - fixed `conditional_after` in Cox model with strata was used.
 
 
-#### 0.23.1
+#### 0.23.1 - 2019-11-27
 
 ##### New features
  - new `print_summary` option `style` to print HTML, LaTeX or ASCII output

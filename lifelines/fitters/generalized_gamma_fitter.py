@@ -17,9 +17,10 @@ class GeneralizedGammaFitter(KnownModelParametricUnivariateFitter):
     The survival function is:
 
     .. math::
-        S(t)=\left\{ \begin{array}{}
-           1-{{\Gamma}_{RL}}\left( \tfrac{1}{{{\lambda }^{2}}};\tfrac{{{e}^{\lambda \left( \tfrac{\text{ln}(t)-\mu }{\sigma } \right)}}}{{{\lambda }^{2}}} \right)\text{ if }\lambda >0  \\
-           {{\Gamma}_{RL}}\left( \tfrac{1}{{{\lambda }^{2}}};\tfrac{{{e}^{\lambda \left( \tfrac{\text{ln}(t)-\mu }{\sigma } \right)}}}{{{\lambda }^{2}}} \right)\text{       if }\lambda < 0  \\
+
+        S(t)=\left\{  \begin{array}{}
+           1-\Gamma_{RL}\left( \frac{1}{{{\lambda }^{2}}};\frac{{e}^{\lambda \left( \frac{\log(t)-\mu }{\sigma} \right)}}{\lambda ^{2}} \right)  \textit{ if } \lambda> 0 \\
+              \Gamma_{RL}\left( \frac{1}{{{\lambda }^{2}}};\frac{{e}^{\lambda \left( \frac{\log(t)-\mu }{\sigma} \right)}}{\lambda ^{2}} \right)  \textit{ if } \lambda \le 0 \\
         \end{array} \right.\,\!
 
     where :math:`\Gamma_{RL}` is the regularized lower incomplete Gamma function.
@@ -100,6 +101,7 @@ class GeneralizedGammaFitter(KnownModelParametricUnivariateFitter):
     _fitted_parameter_names = ["mu_", "ln_sigma_", "lambda_"]
     _bounds = [(None, None), (None, None), (None, None)]
     _compare_to_values = np.array([0.0, 0.0, 1.0])
+    _scipy_fit_options = {"ftol": 1e-7}
 
     def _create_initial_point(self, Ts, E, *args):
         if CensoringType.is_right_censoring(self):
@@ -107,8 +109,9 @@ class GeneralizedGammaFitter(KnownModelParametricUnivariateFitter):
         elif CensoringType.is_left_censoring(self):
             log_data = log(Ts[1])
         elif CensoringType.is_interval_censoring(self):
-            log_data = log(Ts[1] - Ts[0])
-        return np.array([log_data.mean(), log(log_data.std()), 0.1])
+            # this fails if Ts[1] == Ts[0], so we add a some fudge factors.
+            log_data = log(Ts[1] - Ts[0] + 0.01)
+        return np.array([log_data.mean(), log(log_data.std() + 0.01), 0.1])
 
     def _survival_function(self, params, times):
         mu_, ln_sigma_, lambda_ = params

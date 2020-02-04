@@ -1,4 +1,4 @@
-Univariate Models
+Univariate models
 ==================
 
 AalenJohansenFitter
@@ -22,6 +22,14 @@ ExponentialFitter
 .. automodule:: lifelines.fitters.exponential_fitter
     :members:
     :undoc-members:
+
+GeneralizedGammaFitter
+------------------------------------------
+
+.. automodule:: lifelines.fitters.generalized_gamma_fitter
+    :members:
+    :undoc-members:
+
 
 KaplanMeierFitter
 ----------------------------------------------
@@ -58,7 +66,13 @@ PiecewiseExponentialFitter
     :members:
     :undoc-members:
 
+SplineFitter
+-------------------------------------------------------
 
+.. automodule:: lifelines.fitters.spline_fitter
+    :members:
+    :undoc-members:
+    :exclude-members: SplineFitterMixin
 
 WeibullFitter
 ------------------------------------------
@@ -68,15 +82,8 @@ WeibullFitter
     :undoc-members:
 
 
-GeneralizedGammaFitter
-------------------------------------------
 
-.. automodule:: lifelines.fitters.generalized_gamma_fitter
-    :members:
-    :undoc-members:
-
-
-Regression Models
+Regression models
 ==================
 
 
@@ -129,5 +136,13 @@ PiecewiseExponentialRegressionFitter
 ----------------------------------------------------------------------
 
 .. automodule:: lifelines.fitters.piecewise_exponential_regression_fitter
+    :members:
+    :undoc-members:
+
+
+GeneralizedGammaRegressionFitter
+------------------------------------------
+
+.. automodule:: lifelines.fitters.generalized_gamma_regression_fitter
     :members:
     :undoc-members:

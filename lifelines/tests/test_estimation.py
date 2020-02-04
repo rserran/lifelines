@@ -61,6 +61,7 @@ from lifelines import (
     PiecewiseExponentialRegressionFitter,
     GeneralizedGammaFitter,
     GeneralizedGammaRegressionFitter,
+    SplineFitter,
 )
 
 from lifelines.datasets import (
@@ -111,8 +112,13 @@ def data_pred1():
 
 
 class PiecewiseExponentialFitterTesting(PiecewiseExponentialFitter):
-    def __init__(self, **kwargs):
-        super(PiecewiseExponentialFitterTesting, self).__init__([5.0], **kwargs)
+    def __init__(self, *args, **kwargs):
+        super(PiecewiseExponentialFitterTesting, self).__init__([5.0], *args, **kwargs)
+
+
+class SplineFitterTesting(SplineFitter):
+    def __init__(self, *args, **kwargs):
+        super(SplineFitterTesting, self).__init__([0.0, 40.0], *args, **kwargs)
 
 
 class CustomRegressionModelTesting(ParametricRegressionFitter):
@@ -184,6 +190,7 @@ def known_parametric_univariate_fitters():
         LogLogisticFitter,
         PiecewiseExponentialFitterTesting,
         GeneralizedGammaFitter,
+        SplineFitterTesting,
     ]
 
 
@@ -313,6 +320,15 @@ class TestParametricUnivariateFitters:
             with pytest.raises(ValueError, match="lower_bound == upper_bound"):
                 f = fitter().fit_interval_censoring(df["left"], df["right"], event_observed=np.ones_like(df["right"]))
 
+    def test_print_summary(self, sample_lifetimes, known_parametric_univariate_fitters):
+        T = np.random.exponential(1, size=100)
+        for f in known_parametric_univariate_fitters:
+            f = f()
+            f.fit(T)
+            f.print_summary(style="ascii")
+            f.print_summary(style="html")
+            f.print_summary(style="latex")
+
 
 class TestUnivariateFitters:
     @pytest.fixture
@@ -327,6 +343,7 @@ class TestUnivariateFitters:
             LogLogisticFitter,
             PiecewiseExponentialFitterTesting,
             GeneralizedGammaFitter,
+            SplineFitterTesting,
         ]
 
     def test_confidence_interval_has_the_correct_order_so_plotting_doesnt_break(
@@ -874,6 +891,12 @@ class TestLogLogisticFitter:
 
 
 class TestWeibullFitter:
+    def test_unstable_data(self):
+        data = pd.read_csv("https://raw.githubusercontent.com/scotty269/lifelines_test/master/my_data.csv")
+        T = data["T"]
+        E = data["E"]
+        assert abs(WeibullFitter().fit(T, E).log_likelihood_ - LogNormalFitter().fit(T, E).log_likelihood_) < 0.5
+
     @flaky(max_runs=3, min_passes=2)
     @pytest.mark.parametrize("N", [750, 1500])
     def test_left_censorship_inference(self, N):
@@ -1034,8 +1057,8 @@ class TestGeneralizedGammaFitter:
 
         gg = GeneralizedGammaFitter().fit(T)
         npt.assert_allclose(gg.summary.loc["mu_", "coef"], 4.23064, rtol=0.001)
-        npt.assert_allclose(gg.summary.loc["lambda_", "coef"], 0.307639, rtol=1e-5)
-        npt.assert_allclose(np.exp(gg.summary.loc["ln_sigma_", "coef"]), 0.509982, rtol=1e-6)
+        npt.assert_allclose(gg.summary.loc["lambda_", "coef"], 0.307639, rtol=1e-3)
+        npt.assert_allclose(np.exp(gg.summary.loc["ln_sigma_", "coef"]), 0.509982, rtol=1e-3)
 
 
 class TestExponentialFitter:
@@ -1452,7 +1475,8 @@ class TestParametricRegressionFitter:
 
     def test_custom_weibull_model_gives_the_same_data_as_implemented_weibull_model(self, rossi):
         class CustomWeibull(ParametricRegressionFitter):
-
+            _scipy_fit_method = "SLSQP"
+            _scipy_fit_options = {"ftol": 1e-10, "maxiter": 200}
             _fitted_parameter_names = ["lambda_", "rho_"]
 
             def _cumulative_hazard(self, params, T, Xs):
@@ -1461,14 +1485,100 @@ class TestParametricRegressionFitter:
 
                 return (T / lambda_) ** rho_
 
-        cb = CustomWeibull()
-        wf = WeibullAFTFitter(fit_intercept=False)
+            def _log_hazard(self, params, T, Xs):
+                lambda_params = params["lambda_"]
+                log_lambda_ = Xs["lambda_"] @ lambda_params
+
+                rho_params = params["rho_"]
+                log_rho_ = Xs["rho_"] @ rho_params
+
+                return log_rho_ - log_lambda_ + anp.expm1(log_rho_) * (anp.log(T) - log_lambda_)
+
+        cb = CustomWeibull(penalizer=0.0)
+        wf = WeibullAFTFitter(fit_intercept=False, penalizer=0.0)
 
         cb.fit(rossi, "week", "arrest", regressors={"lambda_": rossi.columns, "rho_": ["_int"]})
         wf.fit(rossi, "week", "arrest")
 
-        assert_frame_equal(cb.summary.loc["lambda_"], wf.summary.loc["lambda_"], check_less_precise=2)
+        assert_frame_equal(cb.summary.loc["lambda_"], wf.summary.loc["lambda_"], check_less_precise=1)
         npt.assert_allclose(cb.log_likelihood_, wf.log_likelihood_)
+
+        cb.fit_left_censoring(rossi, "week", "arrest", regressors={"lambda_": rossi.columns, "rho_": ["_int"]})
+        wf.fit_left_censoring(rossi, "week", "arrest")
+
+        assert_frame_equal(cb.summary.loc["lambda_"], wf.summary.loc["lambda_"], check_less_precise=1)
+        npt.assert_allclose(cb.log_likelihood_, wf.log_likelihood_)
+
+        rossi = rossi.loc[rossi["arrest"].astype(bool)]
+        rossi["week_end"] = rossi["week"].copy()
+        rossi = rossi.drop("arrest", axis=1)
+        cb.fit_interval_censoring(rossi, "week", "week_end", regressors={"lambda_": rossi.columns, "rho_": ["_int"]})
+        wf.fit_interval_censoring(rossi, "week", "week_end")
+
+        assert_frame_equal(cb.summary.loc["lambda_"], wf.summary.loc["lambda_"], check_less_precise=1)
+        npt.assert_allclose(cb.log_likelihood_, wf.log_likelihood_, rtol=0.01)
+
+
+class CureModelA(ParametricRegressionFitter):
+
+    _fitted_parameter_names = ["lambda_", "beta_", "rho_"]
+
+    def _cumulative_hazard(self, params, T, Xs):
+        c = expit(anp.dot(Xs["beta_"], params["beta_"]))
+
+        lambda_ = anp.exp(anp.dot(Xs["lambda_"], params["lambda_"]))
+        rho_ = anp.exp(anp.dot(Xs["rho_"], params["rho_"]))
+        cdf = 1 - anp.exp(-((T / lambda_) ** rho_))
+
+        return -anp.log((1 - c) + c * (1 - cdf))
+
+
+class CureModelB(ParametricRegressionFitter):
+    # notice the c vs 1-c in the return statement
+    _fitted_parameter_names = ["lambda_", "beta_", "rho_"]
+
+    def _cumulative_hazard(self, params, T, Xs):
+        c = expit(anp.dot(Xs["beta_"], params["beta_"]))
+
+        lambda_ = anp.exp(anp.dot(Xs["lambda_"], params["lambda_"]))
+        rho_ = anp.exp(anp.dot(Xs["rho_"], params["rho_"]))
+        cdf = 1 - anp.exp(-((T / lambda_) ** rho_))
+
+        return -anp.log(c + (1 - c) * (1 - cdf))
+
+
+class CureModelC(CureModelB):
+    # shuffle these parameter names - shouldn't change anything.
+    _fitted_parameter_names = ["lambda_", "rho_", "beta_"]
+
+
+class TestCustomRegressionModel:
+    @pytest.fixture
+    def rossi(self):
+        rossi = load_rossi()
+        rossi["intercept"] = 1.0
+        return rossi
+
+    def test_reparameterization_flips_the_sign(self, rossi):
+
+        regressors = {"lambda_": rossi.columns, "rho_": ["intercept"], "beta_": ["intercept", "fin"]}
+
+        cmA = CureModelA()
+        cmB = CureModelB()
+        cmC = CureModelC()
+
+        cmA.fit(rossi, "week", event_col="arrest", regressors=regressors)
+        cmB.fit(rossi, "week", event_col="arrest", regressors=regressors)
+        cmC.fit(
+            rossi,
+            "week",
+            event_col="arrest",
+            regressors={"lambda_": rossi.columns, "beta_": ["intercept", "fin"], "rho_": ["intercept"]},
+        )
+        assert_frame_equal(cmA.summary.loc["lambda_"], cmB.summary.loc["lambda_"])
+        assert_frame_equal(cmA.summary.loc["rho_"], cmB.summary.loc["rho_"])
+        assert_frame_equal(cmC.summary, cmB.summary)
+        assert_series_equal(cmA.params_.loc["beta_"], -cmB.params_.loc["beta_"])
 
 
 class TestRegressionFitters:
@@ -2136,6 +2246,7 @@ class TestWeibullAFTFitter:
     def test_fitted_coefs_match_with_flexsurv_has(self, aft, rossi):
         """
         library('flexsurv')
+        df = read.csv("~/code/lifelines/lifelines/datasets/rossi.csv")
         r = flexsurvreg(Surv(week, arrest) ~ fin + age + race + wexp + mar + paro + prio, data=df, dist='weibull')
         r$coef
         """
@@ -2224,11 +2335,13 @@ class TestWeibullAFTFitter:
         aft.predict_median(rossi, ancillary_df=rossi)
         aft.predict_percentile(rossi, ancillary_df=rossi)
         aft.predict_cumulative_hazard(rossi, ancillary_df=rossi)
+        aft.predict_hazard(rossi, ancillary_df=rossi)
         aft.predict_survival_function(rossi, ancillary_df=rossi)
 
         aft.predict_median(rossi)
         aft.predict_percentile(rossi)
         aft.predict_cumulative_hazard(rossi)
+        aft.predict_hazard(rossi)
         aft.predict_survival_function(rossi)
 
     def test_passing_in_additional_ancillary_df_in_predict_methods_okay_if_not_fitted_with_one(self, rossi, aft):
@@ -2236,7 +2349,7 @@ class TestWeibullAFTFitter:
         aft.fit(rossi, "week", "arrest", ancillary_df=False)
         aft.predict_median(rossi, ancillary_df=rossi)
         aft.predict_percentile(rossi, ancillary_df=rossi)
-        aft.predict_cumulative_hazard(rossi, ancillary_df=rossi)
+        aft.predict_hazard(rossi, ancillary_df=rossi)
         aft.predict_survival_function(rossi, ancillary_df=rossi)
 
     def test_robust_errors_against_R(self, rossi, aft):
@@ -2749,6 +2862,12 @@ Log-likelihood ratio test = 33.27 on 7 df, -log2(p)=15.37
                 assert output[i] == expected[i]
         finally:
             sys.stdout = saved_stdout
+
+    def test_print_summary_with_styles(self, rossi, cph):
+        cph.fit(rossi, duration_col="week", event_col="arrest")
+        cph.print_summary(style="html")
+        cph.print_summary(style="latex")
+        cph.print_summary(style="ascii")
 
     def test_log_likelihood(self, data_nus, cph):
         cph.fit(data_nus, duration_col="t", event_col="E")

@@ -2,6 +2,7 @@
 from typing import *
 import numpy as np
 from lifelines import utils
+import pandas as pd
 
 
 class Printer:
@@ -57,8 +58,6 @@ class Printer:
         print(self.to_html())
 
     def to_html(self):
-        import re
-
         decimals = self.decimals
         summary_df = self.model.summary
         columns = summary_df.columns
@@ -98,9 +97,11 @@ class Printer:
             except AttributeError:
                 pass
 
-        footer_df = pd.DataFrame.from_records(footers).set_index(0)
-        footer_html = footer_df.to_html(header=False, notebook=True, index_names=False)
-
+        if footers:
+            footer_df = pd.DataFrame.from_records(footers).set_index(0)
+            footer_html = footer_df.to_html(header=False, notebook=True, index_names=False)
+        else:
+            footer_html = ""
         return header_html + summary_html + footer_html
 
     def ascii_print(self):
@@ -151,7 +152,7 @@ class Printer:
             df.to_string(
                 float_format=utils.format_floats(decimals),
                 formatters={
-                    **{utils.leading_space(c): utils.format_exp_floats(decimals) for c in columns if "exp(" in c},
+                    **{c: utils.format_exp_floats(decimals) for c in columns if "exp(" in c},
                     **{utils.leading_space("p"): utils.format_p_value(decimals)},
                 },
                 columns=[c for c in utils.map_leading_space(first_row_set) if c in columns],
@@ -164,7 +165,7 @@ class Printer:
                 df.to_string(
                     float_format=utils.format_floats(decimals),
                     formatters={
-                        **{utils.leading_space(c): utils.format_exp_floats(decimals) for c in columns if "exp(" in c},
+                        **{c: utils.format_exp_floats(decimals) for c in columns if "exp(" in c},
                         **{utils.leading_space("p"): utils.format_p_value(decimals)},
                     },
                     columns=utils.map_leading_space(second_row_set),
@@ -189,3 +190,4 @@ class Printer:
                 )
             except AttributeError:
                 pass
+        print()

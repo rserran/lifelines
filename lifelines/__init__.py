@@ -20,11 +20,12 @@ from lifelines.fitters.log_normal_aft_fitter import LogNormalAFTFitter
 from lifelines.fitters.piecewise_exponential_regression_fitter import PiecewiseExponentialRegressionFitter
 from lifelines.fitters.generalized_gamma_fitter import GeneralizedGammaFitter
 from lifelines.fitters.generalized_gamma_regression_fitter import GeneralizedGammaRegressionFitter
+from lifelines.fitters.spline_fitter import SplineFitter
 
 
 from lifelines.version import __version__
 
-__all__: List[str] = [
+__all__ = [
     "__version__",
     "KaplanMeierFitter",
     "NelsonAalenFitter",
@@ -44,4 +45,5 @@ __all__: List[str] = [
     "GeneralizedGammaRegressionFitter",
     "PiecewiseExponentialFitter",
     "PiecewiseExponentialRegressionFitter",
+    "SplineFitter",
 ]

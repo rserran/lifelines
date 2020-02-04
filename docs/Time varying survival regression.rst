@@ -5,7 +5,7 @@ Time varying survival regression
 Cox's time varying proportional hazard model
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Often an individual will have a covariate change over time. An example of this is hospital patients who enter the study and, at some future time, may receive a heart transplant. We would like to know the effect of the transplant, but we cannot condition on whether they received the transplant naively. Consider that if patients needed to wait at least 1 year before getting a transplant, then everyone who dies before that year is considered as a non-transplant patient, and hence this would overestimate the hazard of not receiving a transplant.
+Often an individual will have a covariate change over time. An example of this is hospital patients who enter the study and, at some future time, may receive a heart transplant. We would like to know the effect of the transplant, but we must be careful if we condition on whether they received the transplant. Consider that if patients needed to wait at least 1 year before getting a transplant, then everyone who dies before that year is considered as a non-transplant patient, and hence this would overestimate the hazard of not receiving a transplant.
 
 We can incorporate changes over time into our survival analysis by using a modification of the Cox model above. The general mathematical description is:
 
@@ -185,7 +185,7 @@ To handle this, you can delay the observations by time periods:
 Fitting the model
 ################################################
 
-Once your dataset is in the correct orientation, we can use :class:`~lifelines.fitters.cox_time_varying_fitter.CoxTimeVaryingFitter` to fit the model to your data. The method is similar to :class:`~lifelines.fitters.coxph_fitter.CoxPHFitter`, expect we need to tell the :meth:`~lifelines.fitters.cox_time_varying_fitter.CoxTimeVaryingFitter.fit` about the additional time columns.
+Once your dataset is in the correct orientation, we can use :class:`~lifelines.fitters.cox_time_varying_fitter.CoxTimeVaryingFitter` to fit the model to your data. The method is similar to :class:`~lifelines.fitters.coxph_fitter.CoxPHFitter`, except we need to tell the :meth:`~lifelines.fitters.cox_time_varying_fitter.CoxTimeVaryingFitter.fit` about the additional time columns.
 
 Fitting the Cox model to the data involves using gradient descent. *lifelines* takes extra effort to help with convergence, so please be attentive to any warnings that appear. Fixing any warnings will generally help convergence. For further help, see :ref:`Problems with convergence in the Cox Proportional Hazard Model`.
 

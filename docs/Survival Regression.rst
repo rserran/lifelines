@@ -173,7 +173,6 @@ Back to our original problem of predicting the event time of censored individual
     censored_subjects = X.loc[~X['arrest'].astype(bool)]
     censored_subjects_last_obs = censored_subjects['week']
 
-    cph.predict_partial_hazard(censored_subjects, conditional_after=censored_subjects_last_obs)
     cph.predict_survival_function(censored_subjects, times=[5., 25., 50.], conditional_after=censored_subjects_last_obs)
     cph.predict_median(censored_subjects, conditional_after=censored_subjects_last_obs)
 
@@ -371,9 +370,12 @@ Baseline hazard and survival
 
 To access the non-parametric baseline hazard and baseline survival, one can use :attr:`~lifelines.fitters.coxph_fitter.CoxPHFitter.baseline_hazard_` and :attr:`~lifelines.fitters.coxph_fitter.CoxPHFitter.baseline_survival_` respectively. These are computed using Breslow's approximation. If you are interested in a _parametric_ baseline hazard, please see `this issue <https://github.com/CamDavidsonPilon/lifelines/issues/812>`_.
 
+Parametric survival models
+==================================
 
 Accelerated failure time models
-==================================
+-----------------------------------------------
+
 
 Suppose we have two populations, A and B, with different survival functions, :math:`S_A(t)` and :math:`S_B(t)`, and they are related by some *accelerated failure rate*, :math:`\lambda`:
 
@@ -633,7 +635,7 @@ There are two hyper-parameters that can be used to to achieve a better test scor
     """
 
 
-The Log-Normal and Log-Logistic AFT model
+The log-normal and log-logistic AFT models
 -----------------------------------------------
 
 There are also the :class:`~lifelines.fitters.log_normal_aft_fitter.LogNormalAFTFitter` and :class:`~lifelines.fitters.log_logistic_aft_fitter.LogLogisticAFTFitter` models, which instead of assuming that the survival time distribution is Weibull, we assume it is Log-Normal or Log-Logistic, respectively. They have identical APIs to the :class:`~lifelines.fitters.weibull_aft_fitter.WeibullAFTFitter`, but the parameter names are different.
@@ -648,10 +650,44 @@ There are also the :class:`~lifelines.fitters.log_normal_aft_fitter.LogNormalAFT
     lnf = LogNormalAFTFitter().fit(rossi, 'week', 'arrest')
 
 
-Model selection for AFT models
+The piecewise-exponential regression and generalized gamma models
+-------------------------------------------------------------------------
+
+Another class of parametric models involves more flexible modeling of the hazard function. The :class:`~lifelines.fitters.piecewise_exponential_regression_fitter.PiecewiseExponentialRegressionFitter` can model jumps in the hazard (think: the differences in "survival-of-staying-in-school" between 1st year, 2nd year, 3rd year, and 4th year students), and constant values between jumps. The ability to specify *when* these jumps occur, called breakpoints, offers modelers great flexibility. An example application involving customer churn is available in this `notebook <https://github.com/CamDavidsonPilon/lifelines/blob/master/examples/SaaS%20churn%20and%20piecewise%20regression%20models.ipynb>`_.
+
+For a flexible and *smooth* parametric model, there is the :class:`~lifelines.fitters.generalized_gamma_regression_fitter.GeneralizedGammaRegressionFitter`. This model is actually a generalization of all the AFT models above (that is, specific values of its parameters represent another model ) - see docs for specific parameter values. The API is slightly different however, and looks more like how custom regression models are built (see next section on *Custom Regression Models*).
+
+.. code:: python
+
+
+    from lifelines import GeneralizedGammaRegressionFitter
+    from lifelines.datasets import load_rossi
+
+    df = load_rossi()
+    df['constant'] = 1.
+
+    # this will regress df against all 3 parameters
+    ggf = GeneralizedGammaRegressionFitter().fit(df, 'week', 'arrest')
+    ggf.print_summary()
+
+
+    # if we only want to regress against the scale parameter, `mu_`
+    regressors = {
+        'mu_': rossi.columns,
+        'sigma_': ['constant'],
+        'lambda_': ['constant']
+    }
+
+    ggf = GeneralizedGammaRegressionFitter().fit(df, 'week', 'arrest', regressors=regressors)
+    ggf.print_summary()
+
+
+
+
+Model selection for parametric models
 -----------------------------------------------
 
-Often, you don't know *a priori* which AFT model to use. Each model has some assumptions built-in (not implemented yet in *lifelines*), but a quick and effective method is to compare the log-likelihoods for each fitted model. (Technically, we are comparing the `AIC <https://en.wikipedia.org/wiki/Akaike_information_criterion>`_, but the number of parameters for each model is the same, so we can simply and just look at the log-likelihood). Generally, given the same dataset and number of parameters, a better fitting model has a larger log-likelihood. We can look at the log-likelihood for each fitted model and select the largest one.
+Often, you don't know *a priori* which parametric model to use. Each model has some assumptions built-in (not implemented yet in *lifelines*), but a quick and effective method is to compare the log-likelihoods for each fitted model. (Technically, we are comparing the `AIC <https://en.wikipedia.org/wiki/Akaike_information_criterion>`_, but the number of parameters for each model is the same, so we can simply and just look at the log-likelihood). Generally, given the same dataset and number of parameters, a better fitting model has a larger log-likelihood. We can look at the log-likelihood for each fitted model and select the largest one.
 
 .. code:: python
 
@@ -683,7 +719,7 @@ Often, you don't know *a priori* which AFT model to use. Each model has some ass
 Left, right and interval censored data
 -----------------------------------------------
 
-The AFT models have APIs that handle left and interval censored data, too. The API for them is different than the API for fitting to right censored data. Here's an example with interval censored data.
+The parametric models have APIs that handle left and interval censored data, too. The API for them is different than the API for fitting to right censored data. Here's an example with interval censored data.
 
 .. code:: python
 
@@ -724,6 +760,12 @@ The AFT models have APIs that handle left and interval censored data, too. The A
 
 
 Another example of using lifelines for interval censored data is located `here <https://dataorigami.net/blogs/napkin-folding/counting-and-interval-censoring>`_.
+
+
+Custom parametric regression models
+-------------------------------------
+
+*lifelines* has a very general syntax for creating your own parametric regression models. If you are looking to create your own custom models, see docs `Custom Regression Models`_.
 
 
 
@@ -902,18 +944,12 @@ Prime Minister Stephen Harper.
 .. note:: Because of the nature of the model, estimated survival functions of individuals can increase. This is an expected artifact of Aalen's additive model.
 
 
-Custom Parametric Regression Models
-=======================================
-
-*lifelines* has a very general syntax for creating your own parametric regression models. If you are looking to create your own custom models, see docs `Custom Regression Models`_.
-
-
 Model selection in survival regression
 =========================================
 
 Parametric vs Semi-parametric models
 ---------------------------------------
-Above, we've displayed two *semi-parametric* models (Cox model and Aalen's model), and a family of *parametric* AFT models. Which should you choose? What are the advantages and disadvantages of either? I suggest reading the two following StackExchange answers to get a better idea of what experts think:
+Above, we've displayed two *semi-parametric* models (Cox model and Aalen's model), and a family of *parametric* models. Which should you choose? What are the advantages and disadvantages of either? I suggest reading the two following StackExchange answers to get a better idea of what experts think:
 
 1. `In survival analysis, why do we use semi-parametric models (Cox proportional hazards) instead of fully parametric models? <https://stats.stackexchange.com/q/64739/11867>`__
 2. `In survival analysis, when should we use fully parametric models over semi-parametric ones? <https://stats.stackexchange.com/q/399544/11867>`__

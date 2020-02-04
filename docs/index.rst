@@ -11,7 +11,7 @@
 lifelines
 =====================================
 
-*lifelines* is a implementation of survival analysis in Python. What
+*lifelines* is an implementation of survival analysis in Python. What
 benefits does *lifelines* offer over other survival analysis
 implementations?
 
@@ -71,6 +71,13 @@ Contents:
 
   Gitter channel <https://gitter.im/python-lifelines/Lobby>
   Create a GitHub issue <https://github.com/camdavidsonpilon/lifelines/issues>
+
+.. toctree::
+  :maxdepth: 1
+  :caption: Developer Documentation
+
+  Contributing
+
 
 Installation
 ------------------------------
