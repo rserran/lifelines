@@ -1,4 +1,4 @@
-.. image:: http://i.imgur.com/EOowdSD.png
+.. image:: https://i.imgur.com/EOowdSD.png
 
 -------------------------------------
 
@@ -6,9 +6,9 @@ Estimating univariate models
 =====================================
 
 In the previous :doc:`section</Survival Analysis intro>`,
-we introduced the use of survival analysis, the need, and the
+we introduced the applications of survival analysis and the
 mathematical objects on which it relies. In this article, we will work
-with real data and the *lifelines* library to estimate these mathematical objects.
+with real data and the *lifelines* library to estimate these objects.
 
 Estimating the survival function using Kaplan-Meier
 ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
@@ -21,7 +21,7 @@ event is the retirement of the individual. Censoring can occur if they are a) st
 of dataset compilation (2008), or b) die while in power (this includes assassinations).
 
 For example, the Bush regime began in 2000 and officially ended in 2008
-upon his retirement, thus this regime's lifespan was eight years, and there was a
+upon his retirement, thus the regime's lifespan was eight years, and there was a
 "death" event observed. On the other hand, the JFK regime lasted 2
 years, from 1961 and 1963, and the regime's official death event *was
 not* observed -- JFK died before his official retirement.
@@ -102,11 +102,12 @@ Below we fit our data with the :class:`~lifelines.fitters.kaplan_meier_fitter.Ka
 
 
 After calling the :meth:`~lifelines.fitters.kaplan_meier_fitter.KaplanMeierFitter.fit` method, the :class:`~lifelines.fitters.kaplan_meier_fitter.KaplanMeierFitter` has a property
-called :attr:`~lifelines.fitters.kaplan_meier_fitter.KaplanMeierFitter.survival_function_` (again, we follow the styling of
-scikit-learn, and append an underscore to all properties that were computational estimated).
+called :attr:`~lifelines.fitters.kaplan_meier_fitter.KaplanMeierFitter.survival_function_` (again, we follow the styling of scikit-learn, and append an underscore to all properties that were estimated).
 The property is a Pandas DataFrame, so we can call :meth:`~lifelines.fitters.kaplan_meier_fitter.KaplanMeierFitter.plot` on it:
 
 .. code:: python
+    from matplotlib import pyplot as plt
+
 
     kmf.survival_function_.plot()
     plt.title('Survival function of political regimes');
@@ -117,15 +118,9 @@ The property is a Pandas DataFrame, so we can call :meth:`~lifelines.fitters.kap
 
 How do we interpret this? The y-axis represents the probability a leader is still
 around after :math:`t` years, where :math:`t` years is on the x-axis. We
-see that very few leaders make it past 20 years in office. Of course,
-like all good stats, we need to report how uncertain we are about these
-point estimates, i.e., we need confidence intervals. They are computed in
+see that very few leaders make it past 20 years in office. Of course, we need to report how uncertain we are about these point estimates, i.e., we need confidence intervals. They are computed in
 the call to :meth:`~lifelines.fitters.kaplan_meier_fitter.KaplanMeierFitter.fit`, and located under the :attr:`~lifelines.fitters.kaplan_meier_fitter.KaplanMeierFitter.confidence_interval_`
-property. (The method uses exponential Greenwood confidence interval. The mathematics are found in `these notes <https://www.math.wustl.edu/%7Esawyer/handouts/greenwood.pdf>`_.)
-
-.. math::  S(t) = Pr( T > t)
-
-Alternatively, we can call :meth:`~lifelines.fitters.kaplan_meier_fitter.KaplanMeierFitter.plot` on the :class:`~lifelines.fitters.kaplan_meier_fitter.KaplanMeierFitter` itself to plot both the KM estimate and its confidence intervals:
+property. (The method uses exponential Greenwood confidence interval. The mathematics are found in `these notes <https://www.math.wustl.edu/%7Esawyer/handouts/greenwood.pdf>`_.) We can call :meth:`~lifelines.fitters.kaplan_meier_fitter.KaplanMeierFitter.plot` on the :class:`~lifelines.fitters.kaplan_meier_fitter.KaplanMeierFitter` itself to plot both the KM estimate and its confidence intervals:
 
 .. code:: python
 
@@ -142,7 +137,6 @@ average 50% of the population has expired, is a property:
 
     kmf.median_survival_time_
     #   4.0
-
 
 
 Interesting that it is only four years. That means, around the world, elected leaders
@@ -166,6 +160,7 @@ an ``axis`` object, that can be used for plotting further estimates:
 
     kmf.fit(T[dem], event_observed=E[dem], label="Democratic Regimes")
     kmf.plot(ax=ax)
+
     kmf.fit(T[~dem], event_observed=E[~dem], label="Non-democratic Regimes")
     kmf.plot(ax=ax)
 
@@ -183,17 +178,18 @@ times we are interested in and are returned a DataFrame with the
 probabilities of survival at those points:
 
 .. code:: python
+    import numpy as np
 
     ax = plt.subplot(111)
 
     t = np.linspace(0, 50, 51)
     kmf.fit(T[dem], event_observed=E[dem], timeline=t, label="Democratic Regimes")
     ax = kmf.plot(ax=ax)
-    print("Median survival time of democratic:", kmf.median_)
+    print("Median survival time of democratic:", kmf.median_survival_time_)
 
     kmf.fit(T[~dem], event_observed=E[~dem], timeline=t, label="Non-democratic Regimes")
     ax = kmf.plot(ax=ax)
-    print("Median survival time of non-democratic:", kmf.median_)
+    print("Median survival time of non-democratic:", kmf.median_survival_time_)
 
     plt.ylim(0, 1)
     plt.title("Lifespans of different global regimes");
@@ -237,7 +233,6 @@ we rule that the series have different generators.
     results.print_summary()
 
     """
-
     <lifelines.StatisticalResult>
                  t_0 = -1
     null_distribution = chi squared
@@ -247,7 +242,7 @@ we rule that the series have different generators.
     ---
     test_statistic      p  -log2(p)
            260.47  <0.005    192.23
-    """"
+    """
 
 There are alternative (and sometimes better) tests of survival functions, and we explain more here: `Statistically compare two populations`_
 
@@ -548,7 +543,7 @@ Similarly, there are other parametric models in *lifelines*. Generally, which pa
     E = data['E']
 
     wbf = WeibullFitter().fit(T, E, label='WeibullFitter')
-    exf = ExponentialFitter().fit(T, E, label='ExponentalFitter')
+    exf = ExponentialFitter().fit(T, E, label='ExponentialFitter')
     lnf = LogNormalFitter().fit(T, E, label='LogNormalFitter')
     naf = NelsonAalenFitter().fit(T, E, label='NelsonAalenFitter')
     llf = LogLogisticFitter().fit(T, E, label='LogLogisticFitter')
@@ -583,7 +578,7 @@ Parametric models can also be used to create and plot the survival function, too
 
     kmf = KaplanMeierFitter().fit(T, E, label='KaplanMeierFitter')
     wbf = WeibullFitter().fit(T, E, label='WeibullFitter')
-    exf = ExponentialFitter().fit(T, E, label='ExponentalFitter')
+    exf = ExponentialFitter().fit(T, E, label='ExponentialFitter')
     lnf = LogNormalFitter().fit(T, E, label='LogNormalFitter')
     llf = LogLogisticFitter().fit(T, E, label='LogLogisticFitter')
     pwf = PiecewiseExponentialFitter([40, 60]).fit(T, E, label='PiecewiseExponentialFitter')
@@ -663,7 +658,7 @@ instruments could only detect the measurement was *less* than some upper bound. 
     """
 
 
-*lifelines* has support for left-censored datasets in most univariate models, including the :class:`~lifelines.fitters.kaplan_meier_fitter.KaplanMeierFitter` class, by using the :meth:`lifelines.fitters.kaplan_meier_fitter.KaplanMeierFitter.fit_left_censoring` method.
+*lifelines* has support for left-censored datasets in most univariate models, including the :class:`~lifelines.fitters.kaplan_meier_fitter.KaplanMeierFitter` class, by using the :meth:`~lifelines.fitters.kaplan_meier_fitter.KaplanMeierFitter.fit_left_censoring` method.
 
 .. code:: python
 
@@ -673,7 +668,7 @@ instruments could only detect the measurement was *less* than some upper bound. 
     kmf = KaplanMeierFitter()
     kmf.fit_left_censoring(T, E)
 
-Instead of producing a survival function, left-censored data analysis is more interested in the cumulative density function. This is available as the :attr:`lifelines.fitters.kaplan_meier_fitter.KaplanMeierFitter.cumulative_density_` property after fitting the data.
+Instead of producing a survival function, left-censored data analysis is more interested in the cumulative density function. This is available as the :attr:`~lifelines.fitters.kaplan_meier_fitter.KaplanMeierFitter.cumulative_density_` property after fitting the data.
 
 .. code:: python
 
@@ -732,7 +727,7 @@ Based on the above, the log-normal distribution seems to fit well, and the Weibu
 Interval censored data
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Data can also be interval censored. An example of this is periodically recording the population of micro-organisms as they die-off. Their deaths are interval censored because you know a subject died between two observations periods. New to lifelines in version 0.21.0, all parametric models have support for interval censored data.
+Data can also be interval censored. An example of this is periodically recording the population of micro-organisms as they die-off. Their deaths are interval censored because you know a subject died between two observations periods.
 
 .. note:: The API for ``fit_interval_censoring`` is different than right and left censored data.
 
@@ -740,10 +735,36 @@ Data can also be interval censored. An example of this is periodically recording
 
 
     from lifelines.datasets import load_diabetes
+    from lifelines.plotting import plot_interval_censored_lifetimes
 
     df = load_diabetes()
+    plot_interval_censored_lifetimes(df['left'], df['right'])
 
-    wf = WeibullFitter().fit_interval_censoring(lower_bound=df['left'], upper_bound=df['right'])
+.. image:: images/interval_censored_lifetimes.png
+    :width: 670px
+    :align: center
+
+
+Above, we can see that some subjects' death was exactly observed (denoted by a red ●), and some subjects' deaths is bounded between two times (denoted by the interval between the red ▶︎ ◀︎).  We can perform inference on the data using any of our models. Note the use of calling `fit_interval_censoring` instead of `fit`.
+
+.. code:: python
+
+    wf = WeibullFitter()
+    wf.fit_interval_censoring(lower_bound=df['left'], upper_bound=df['right'])
+
+    # or, a non-parametric estimator:
+    # for now, this assumes closed observation intervals, ex: [4,5], not (4, 5) or (4, 5]
+    kmf = KaplanMeierFitter()
+    kmf.fit_interval_censoring(df['left'], df['right'])
+
+    ax = kmf.plot_survival_function()
+    wf.plot_survival_function(ax=ax)
+
+
+.. image:: images/interval_censored_inference.png
+    :width: 670px
+    :align: center
+
 
 
 Another example of using lifelines for interval censored data is located `here <https://dataorigami.net/blogs/napkin-folding/counting-and-interval-censoring>`_.

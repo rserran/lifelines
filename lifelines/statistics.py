@@ -29,6 +29,7 @@ __all__ = [
     "proportional_hazard_test",
     "power_under_cph",
     "sample_size_necessary_under_cph",
+    "somers_d",
 ]
 
 
@@ -77,7 +78,7 @@ class StatisticalResult:
         kwargs["test_name"] = test_name
         self._kwargs = kwargs
 
-    def print_specific_style(self, style, decimals, **kwargs):
+    def print_specific_style(self, style, decimals=2, **kwargs):
         """
         Parameters
         -----------
@@ -122,18 +123,18 @@ class StatisticalResult:
             except ImportError:
                 self.ascii_print(decimals, **kwargs)
 
-    def html_print_inside_jupyter(self, decimals, **kwargs):
+    def html_print_inside_jupyter(self, decimals=2, **kwargs):
         from IPython.display import HTML, display
 
         display(HTML(self.to_html(decimals, **kwargs)))
 
-    def html_print(self, decimals, **kwargs):
+    def html_print(self, decimals=2, **kwargs):
         print(self.to_html(decimals, **kwargs))
 
-    def ascii_print(self, decimals, **kwargs):
+    def ascii_print(self, decimals=2, **kwargs):
         print(self.to_ascii(decimals, **kwargs))
 
-    def to_html(self, decimals, **kwargs):
+    def to_html(self, decimals=2, **kwargs):
         extra_kwargs = dict(list(self._kwargs.items()) + list(kwargs.items()))
         summary_df = self.summary
 
@@ -144,16 +145,14 @@ class StatisticalResult:
         header_df = pd.DataFrame.from_records(headers).set_index(0)
         header_html = header_df.to_html(header=False, notebook=True, index_names=False)
 
-        summary_html = summary_df.to_html(
-            float_format=format_floats(decimals), formatters={**{"p": format_p_value(decimals)}}
-        )
+        summary_html = summary_df.to_html(float_format=format_floats(decimals), formatters={**{"p": format_p_value(decimals)}})
 
         return header_html + summary_html
 
-    def latex_print(self, decimals, **kwargs):
+    def latex_print(self, decimals=2, **kwargs):
         print(self.to_latex(decimals, **kwargs))
 
-    def to_latex(self, decimals, **kwargs):
+    def to_latex(self, decimals=2, **kwargs):
         return self.summary.to_latex()
 
     @property
@@ -176,9 +175,6 @@ class StatisticalResult:
 
         return pd.DataFrame(list(zip(self._test_statistic, self._p_value)), columns=cols, index=index).sort_index()
 
-    def __repr__(self):
-        return "<lifelines.StatisticalResult: {0}>".format(self.test_name)
-
     def to_ascii(self, decimals=2, **kwargs):
         extra_kwargs = dict(list(self._kwargs.items()) + list(kwargs.items()))
         meta_data = self._stringify_meta_data(extra_kwargs)
@@ -191,9 +187,7 @@ class StatisticalResult:
         s += "\n" + meta_data + "\n"
         s += "---\n"
         s += df.to_string(
-            float_format=format_floats(decimals),
-            index=self.name is not None,
-            formatters={"p": format_p_value(decimals)},
+            float_format=format_floats(decimals), index=self.name is not None, formatters={"p": format_p_value(decimals)}
         )
 
         return s
@@ -214,6 +208,9 @@ class StatisticalResult:
         names = self.name + other.name
         kwargs = dict(list(self._kwargs.items()) + list(other._kwargs.items()))
         return StatisticalResult(p_values, test_statistics, name=names, **kwargs)
+
+    def __repr__(self):
+        return "<lifelines.StatisticalResult: {0}>".format(self.test_name)
 
 
 def sample_size_necessary_under_cph(power, ratio_of_participants, p_exp, p_con, postulated_hazard_ratio, alpha=0.05):
@@ -253,15 +250,17 @@ def sample_size_necessary_under_cph(power, ratio_of_participants, p_exp, p_con, 
 
     Examples
     --------
-    >>> from lifelines.statistics import sample_size_necessary_under_cph
-    >>>
-    >>> desired_power = 0.8
-    >>> ratio_of_participants = 1.
-    >>> p_exp = 0.25
-    >>> p_con = 0.35
-    >>> postulated_hazard_ratio = 0.7
-    >>> n_exp, n_con = sample_size_necessary_under_cph(desired_power, ratio_of_participants, p_exp, p_con, postulated_hazard_ratio)
-    >>> # (421, 421)
+    .. code:: python
+
+        from lifelines.statistics import sample_size_necessary_under_cph
+
+        desired_power = 0.8
+        ratio_of_participants = 1.
+        p_exp = 0.25
+        p_con = 0.35
+        postulated_hazard_ratio = 0.7
+        n_exp, n_con = sample_size_necessary_under_cph(desired_power, ratio_of_participants, p_exp, p_con, postulated_hazard_ratio)
+        # (421, 421)
 
     References
     -----------
@@ -383,18 +382,20 @@ def survival_difference_at_fixed_point_in_time_test(
 
     Examples
     --------
-    >>> T1 = [1, 4, 10, 12, 12, 3, 5.4]
-    >>> E1 = [1, 0, 1,  0,  1,  1, 1]
-    >>>
-    >>> T2 = [4, 5, 7, 11, 14, 20, 8, 8]
-    >>> E2 = [1, 1, 1, 1,  1,  1,  1, 1]
-    >>>
-    >>> from lifelines.statistics import survival_difference_at_fixed_point_in_time_test
-    >>> results = survival_difference_at_fixed_point_in_time_test(12, T1, T2, event_observed_A=E1, event_observed_B=E2)
-    >>>
-    >>> results.print_summary()
-    >>> print(results.p_value)        # 0.893
-    >>> print(results.test_statistic) # 0.017
+    .. code:: python
+
+        T1 = [1, 4, 10, 12, 12, 3, 5.4]
+        E1 = [1, 0, 1,  0,  1,  1, 1]
+
+        T2 = [4, 5, 7, 11, 14, 20, 8, 8]
+        E2 = [1, 1, 1, 1,  1,  1,  1, 1]
+
+        from lifelines.statistics import survival_difference_at_fixed_point_in_time_test
+        results = survival_difference_at_fixed_point_in_time_test(12, T1, T2, event_observed_A=E1, event_observed_B=E2)
+
+        results.print_summary()
+        print(results.p_value)        # 0.893
+        print(results.test_statistic) # 0.017
 
     Notes
     -----
@@ -436,7 +437,7 @@ def survival_difference_at_fixed_point_in_time_test(
 
 
 def logrank_test(
-    durations_A, durations_B, event_observed_A=None, event_observed_B=None, t_0=-1, **kwargs
+    durations_A, durations_B, event_observed_A=None, event_observed_B=None, t_0=-1, weightings=None, **kwargs
 ) -> StatisticalResult:
     r"""
     Measures and reports on whether two intensity processes are different. That is, given two
@@ -455,23 +456,22 @@ def logrank_test(
     Note
     -----
 
-    - The logrank test has maximum power when the assumption of proportional hazards is true. As a consequence, if the survival
-    curves cross, the logrank test will give an inaccurate assessment of differences.
+    - The logrank test has maximum power when the assumption of proportional hazards is true. As a consequence, if the survival curves cross, the logrank test will give an inaccurate assessment of differences.
 
-    - This implementation is a special case of the function ``multivariate_logrank_test``, which is used internally.
-    See Survival and Event Analysis, page 108.
+    - This implementation is a special case of the function ``multivariate_logrank_test``, which is used internally. See Survival and Event Analysis, page 108.
 
-    - There are only disadvantages to using the log-rank test versus using the Cox regression. See more `here <https://discourse.datamethods.org/t/when-is-log-rank-preferred-over-univariable-cox-regression/2344>`_
-    for a discussion. To convert to using the Cox regression:
+    - There are only disadvantages to using the log-rank test versus using the Cox regression. See more `here <https://discourse.datamethods.org/t/when-is-log-rank-preferred-over-univariable-cox-regression/2344>`_ for a discussion. To convert to using the Cox regression:
 
-    >>> from lifelines import CoxPHFitter
-    >>>
-    >>> dfA = pd.DataFrame({'E': event_observed_A, 'T': durations_A, 'groupA': 1})
-    >>> dfB = pd.DataFrame({'E': event_observed_B, 'T': durations_B, 'groupA': 0})
-    >>> df = pd.concat([dfA, dfB])
-    >>>
-    >>> cph = CoxPHFitter().fit(df, 'T', 'E')
-    >>> cph.print_summary()
+    .. code:: python
+
+        from lifelines import CoxPHFitter
+
+        dfA = pd.DataFrame({'E': event_observed_A, 'T': durations_A, 'groupA': 1})
+        dfB = pd.DataFrame({'E': event_observed_B, 'T': durations_B, 'groupA': 0})
+        df = pd.concat([dfA, dfB])
+
+        cph = CoxPHFitter().fit(df, 'T', 'E')
+        cph.print_summary()
 
 
 
@@ -495,10 +495,21 @@ def logrank_test(
     t_0: float, optional (default=-1)
         the final time period under observation, -1 for all time.
 
-    kwargs:
-        add keywords and meta-data to the experiment summary
+    weightings: str, optional
+        apply a weighted logrank test: options are "wilcoxon" for Wilcoxon (also known as Breslow), "tarone-ware"
+        for Tarone-Ware, "peto" for Peto test and "fleming-harrington" for Fleming-Harrington test.
+        These are useful for testing for early or late differences in the survival curve. For the Fleming-Harrington
+        test, keyword arguments p and q must also be provided with non-negative values.
 
+        Weightings are applied at the ith ordered failure time, :math:`t_{i}`, according to:
+            Wilcoxon: :math:`n_i`
+            Tarone-Ware: :math:`\sqrt{n_i}`
+            Peto: :math:`\bar{S}(t_i)`
+            Fleming-Harrington: :math:`\hat{S}(t_i)^p \times (1 - \hat{S}(t_i))^q`
 
+            where :math:`n_i` is the number at risk just prior to time :math:`t_{i}`, :math:`\bar{S}(t_i)` is
+            Peto-Peto's modified survival estimate and :math:`\hat{S}(t_i)` is the left-continuous
+            Kaplan-Meier survival estimate at time :math:`t_{i}`.
     Returns
     -------
 
@@ -507,18 +518,21 @@ def logrank_test(
 
     Examples
     --------
-    >>> T1 = [1, 4, 10, 12, 12, 3, 5.4]
-    >>> E1 = [1, 0, 1,  0,  1,  1, 1]
-    >>>
-    >>> T2 = [4, 5, 7, 11, 14, 20, 8, 8]
-    >>> E2 = [1, 1, 1, 1,  1,  1,  1, 1]
-    >>>
-    >>> from lifelines.statistics import logrank_test
-    >>> results = logrank_test(T1, T2, event_observed_A=E1, event_observed_B=E2)
-    >>>
-    >>> results.print_summary()
-    >>> print(results.p_value)        # 0.7676
-    >>> print(results.test_statistic) # 0.0872
+
+    .. code:: python
+
+        T1 = [1, 4, 10, 12, 12, 3, 5.4]
+        E1 = [1, 0, 1,  0,  1,  1, 1]
+
+        T2 = [4, 5, 7, 11, 14, 20, 8, 8]
+        E2 = [1, 1, 1, 1,  1,  1,  1, 1]
+
+        from lifelines.statistics import logrank_test
+        results = logrank_test(T1, T2, event_observed_A=E1, event_observed_B=E2)
+
+        results.print_summary()
+        print(results.p_value)        # 0.7676
+        print(results.test_statistic) # 0.0872
 
 
     See Also
@@ -536,11 +550,13 @@ def logrank_test(
     event_times = np.r_[event_times_A, event_times_B]
     groups = np.r_[np.zeros(event_times_A.shape[0], dtype=int), np.ones(event_times_B.shape[0], dtype=int)]
     event_observed = np.r_[event_observed_A, event_observed_B]
-    return multivariate_logrank_test(event_times, groups, event_observed, t_0=t_0, test_name="logrank_test", **kwargs)
+    return multivariate_logrank_test(
+        event_times, groups, event_observed, t_0=t_0, test_name="logrank_test", weightings=weightings, **kwargs
+    )
 
 
 def pairwise_logrank_test(
-    event_durations, groups, event_observed=None, t_0=-1, **kwargs
+    event_durations, groups, event_observed=None, t_0=-1, weightings=None, **kwargs
 ) -> StatisticalResult:  # pylint: disable=too-many-locals
 
     r"""
@@ -561,6 +577,21 @@ def pairwise_logrank_test(
     t_0: float, optional (default=-1)
         the period under observation, -1 for all time.
 
+    weightings: str, optional
+        apply a weighted logrank test: options are "wilcoxon" for Wilcoxon (also known as Breslow), "tarone-ware"
+        for Tarone-Ware, "peto" for Peto test and "fleming-harrington" for Fleming-Harrington test.
+        These are useful for testing for early or late differences in the survival curve. For the Fleming-Harrington
+        test, keyword arguments p and q must also be provided with non-negative values.
+
+        Weightings are applied at the ith ordered failure time, :math:`t_{i}`, according to:
+            Wilcoxon: :math:`n_i`
+            Tarone-Ware: :math:`\sqrt{n_i}`
+            Peto: :math:`\bar{S}(t_i)`
+            Fleming-Harrington: :math:`\hat{S}(t_i)^p \times (1 - \hat{S}(t_i))^q`
+
+            where :math:`n_i` is the number at risk just prior to time :math:`t_{i}`, :math:`\bar{S}(t_i)` is
+            Peto-Peto's modified survival estimate and :math:`\hat{S}(t_i)` is the left-continuous
+            Kaplan-Meier survival estimate at time :math:`t_{i}`.
     kwargs:
         add keywords and meta-data to the experiment summary.
 
@@ -569,7 +600,7 @@ def pairwise_logrank_test(
     -------
 
     StatisticalResult
-        a StatisticalResult object that contains all the pairwise comparisons (try ``StatisticalResult.summary`` or ``StatisticalResult.print_summarty``)
+        a StatisticalResult object that contains all the pairwise comparisons (try ``StatisticalResult.summary`` or ``StatisticalResult.print_summary``)
 
 
     See Also
@@ -583,9 +614,7 @@ def pairwise_logrank_test(
 
     n = np.max(np.asarray(event_durations).shape)
 
-    groups, event_durations, event_observed = map(
-        lambda x: np.asarray(x).reshape(n), [groups, event_durations, event_observed]
-    )
+    groups, event_durations, event_observed = map(lambda x: np.asarray(x).reshape(n), [groups, event_durations, event_observed])
 
     if not (n == event_durations.shape[0] == event_observed.shape[0]):
         raise ValueError("inputs must be of the same length.")
@@ -608,6 +637,7 @@ def pairwise_logrank_test(
             event_observed.loc[ix2],
             t_0=t_0,
             name=[(g1, g2)],
+            weightings=weightings,
             **kwargs
         )
 
@@ -619,7 +649,7 @@ def difference_of_restricted_mean_survival_time_test(model1, model2, t):
 
 
 def multivariate_logrank_test(
-    event_durations, groups, event_observed=None, t_0=-1, **kwargs
+    event_durations, groups, event_observed=None, t_0=-1, weightings=None, **kwargs
 ) -> StatisticalResult:  # pylint: disable=too-many-locals
     r"""
     This test is a generalization of the logrank_test: it can deal with n>2 populations (and should
@@ -647,6 +677,22 @@ def multivariate_logrank_test(
     t_0: float, optional (default=-1)
         the period under observation, -1 for all time.
 
+    weightings: str, optional
+        apply a weighted logrank test: options are "wilcoxon" for Wilcoxon (also known as Breslow), "tarone-ware"
+        for Tarone-Ware, "peto" for Peto test and "fleming-harrington" for Fleming-Harrington test.
+        These are useful for testing for early or late differences in the survival curve. For the Fleming-Harrington
+        test, keyword arguments p and q must also be provided with non-negative values.
+
+        Weightings are applied at the ith ordered failure time, :math:`t_{i}`, according to:
+            Wilcoxon: :math:`n_i`
+            Tarone-Ware: :math:`\sqrt{n_i}`
+            Peto: :math:`\bar{S}(t_i)`
+            Fleming-Harrington: :math:`\hat{S}(t_i)^p \times (1 - \hat{S}(t_i))^q`
+
+            where :math:`n_i` is the number at risk just prior to time :math:`t_{i}`, :math:`\bar{S}(t_i)` is
+            Peto-Peto's modified survival estimate and :math:`\hat{S}(t_i)` is the left-continuous
+            Kaplan-Meier survival estimate at time :math:`t_{i}`.
+
     kwargs:
         add keywords and meta-data to the experiment summary.
 
@@ -660,23 +706,25 @@ def multivariate_logrank_test(
     Examples
     --------
 
-    >>> df = pd.DataFrame({
-    >>>    'durations': [5, 3, 9, 8, 7, 4, 4, 3, 2, 5, 6, 7],
-    >>>    'events': [1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 0],
-    >>>    'groups': [0, 0, 0, 0, 1, 1, 1, 1, 1, 2, 2, 2]
-    >>> })
-    >>> result = multivariate_logrank_test(df['durations'], df['groups'], df['events'])
-    >>> result.test_statistic
-    >>> result.p_value
-    >>> result.print_summary()
+    .. code:: python
+
+        df = pd.DataFrame({
+           'durations': [5, 3, 9, 8, 7, 4, 4, 3, 2, 5, 6, 7],
+           'events': [1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 0],
+           'groups': [0, 0, 0, 0, 1, 1, 1, 1, 1, 2, 2, 2]
+        })
+        result = multivariate_logrank_test(df['durations'], df['groups'], df['events'])
+        result.test_statistic
+        result.p_value
+        result.print_summary()
 
 
-    >>> # numpy example
-    >>> G = [0, 0, 0, 0, 1, 1, 1, 1, 1, 2, 2, 2]
-    >>> T = [5, 3, 9, 8, 7, 4, 4, 3, 2, 5, 6, 7]
-    >>> E = [1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 0]
-    >>> result = multivariate_logrank_test(T, G, E)
-    >>> result.test_statistic
+        # numpy example
+        G = [0, 0, 0, 0, 1, 1, 1, 1, 1, 2, 2, 2]
+        T = [5, 3, 9, 8, 7, 4, 4, 3, 2, 5, 6, 7]
+        E = [1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 0]
+        result = multivariate_logrank_test(T, G, E)
+        result.test_statistic
 
 
     See Also
@@ -702,11 +750,46 @@ def multivariate_logrank_test(
     n_groups = unique_groups.shape[0]
 
     # compute the factors needed
-    N_j = obs.sum(0).values
     n_ij = rm.sum(0).values - rm.cumsum(0).shift(1).fillna(0)
     d_i = obs.sum(1)
     n_i = rm.values.sum() - rm.sum(1).cumsum().shift(1).fillna(0)
-    ev = n_ij.mul(d_i / n_i, axis="index").sum(0)
+    ev_i = n_ij.mul(d_i / n_i, axis="index")
+
+    # compute weightings for log-rank alternatives
+    if weightings is None:
+        w_i = np.ones(d_i.shape[0])
+    elif weightings == "wilcoxon":
+        kwargs["test_name"] = kwargs["test_name"].replace("logrank", "Wilcoxon")
+        w_i = n_i
+    elif weightings == "tarone-ware":
+        kwargs["test_name"] = kwargs["test_name"].replace("logrank", "Tarone-Ware")
+        w_i = np.sqrt(n_i)
+    elif weightings == "peto":
+        kwargs["test_name"] = kwargs["test_name"].replace("logrank", "Peto")
+        w_i = np.cumprod(1.0 - (ev_i.sum(1)) / (n_i + 1))  # Peto-Peto's modified survival estimates.
+    elif weightings == "fleming-harrington":
+        if "p" in kwargs:
+            p = kwargs["p"]
+            if p < 0:
+                raise ValueError("p must be non-negative.")
+        else:
+            raise ValueError("Must provide keyword argument p for Flemington-Harrington test statistic")
+        if "q" in kwargs:
+            q = kwargs["q"]
+            if q < 0:
+                raise ValueError("q must be non-negative.")
+        else:
+            raise ValueError("Must provide keyword argument q for Flemington-Harrington test statistic")
+        kwargs["test_name"] = kwargs["test_name"].replace("logrank", "Flemington-Harrington")
+        kmf = KaplanMeierFitter().fit(event_durations, event_observed=event_observed)
+        s = kmf.survival_function_.to_numpy().flatten()[:-1]  # Left-continuous Kaplan-Meier survival estimate.
+        w_i = np.power(s, p) * np.power(1.0 - s, q)
+    else:
+        raise ValueError("Invalid value for weightings.")
+
+    # apply weights to observed and expected
+    N_j = obs.mul(w_i, axis=0).sum(0).values
+    ev = ev_i.mul(w_i, axis=0).sum(0)
 
     # vector of observed minus expected
     Z_j = N_j - ev
@@ -716,7 +799,7 @@ def multivariate_logrank_test(
     # compute covariance matrix
     factor = (((n_i - d_i) / (n_i - 1)).replace([np.inf, np.nan], 1)) * d_i / n_i ** 2
     n_ij["_"] = n_i.values
-    V_ = n_ij.mul(np.sqrt(factor), axis="index").fillna(0)
+    V_ = (n_ij.mul(w_i, axis=0)).mul(np.sqrt(factor), axis="index").fillna(0)  # weighted V_
     V = -np.dot(V_.T, V_)
     ix = np.arange(n_groups)
     V[ix, ix] = V[ix, ix] - V[-1, ix]
@@ -727,9 +810,7 @@ def multivariate_logrank_test(
 
     # compute the p-values and tests
     p_value = _chisq_test_p_value(U, n_groups - 1)
-    return StatisticalResult(
-        p_value, U, t_0=t_0, null_distribution="chi squared", degrees_of_freedom=n_groups - 1, **kwargs
-    )
+    return StatisticalResult(p_value, U, t_0=t_0, null_distribution="chi squared", degrees_of_freedom=n_groups - 1, **kwargs)
 
 
 def _chisq_test_p_value(U, degrees_freedom) -> float:
@@ -793,9 +874,9 @@ def proportional_hazard_test(
         scaled_resids = precomputed_residuals
 
     def compute_statistic(times, resids):
-        times -= times.mean()
-        T = (times.values[:, None] * resids.values).sum(0) ** 2 / (
-            deaths * np.diag(fitted_cox_model.variance_matrix_) * (times ** 2).sum()
+        demeaned_times = times - times.mean()
+        T = (demeaned_times.values[:, None] * resids.values).sum(0) ** 2 / (
+            deaths * np.diag(fitted_cox_model.variance_matrix_) * (demeaned_times ** 2).sum()
         )
         return T
 

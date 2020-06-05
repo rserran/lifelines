@@ -1,4 +1,4 @@
-.. image:: http://i.imgur.com/EOowdSD.png
+.. image:: https://i.imgur.com/EOowdSD.png
 
 -------------------------------------
 
@@ -103,27 +103,29 @@ The implementation of the Cox model in *lifelines* is under :class:`~lifelines.f
     prio  3.19 <0.005       9.48
     ---
     Concordance = 0.64
-    Log-likelihood ratio test = 33.27 on 7 df, -log2(p)=15.37
+    Partial AIC = 1331.50
+    log-likelihood ratio test = 33.27 on 7 df
+    -log2(p) of ll-ratio test = 15.37
     """
 
 To access the coefficients and the baseline hazard directly, you can use :attr:`~lifelines.fitters.coxph_fitter.CoxPHFitter.params_` and :attr:`~lifelines.fitters.coxph_fitter.CoxPHFitter.baseline_hazard_` respectively. Taking a look at these coefficients for a moment, ``prio`` (the number of prior arrests) has a coefficient of about 0.09. Thus, a one unit increase in ``prio`` means the the baseline hazard will increase by a factor of :math:`\exp{(0.09)} = 1.10` - about a 10% increase. Recall, in the Cox proportional hazard model, a higher hazard means more at risk of the event occurring. The value :math:`\exp{(0.09)}` is called the *hazard ratio*, a name that will be clear with another example.
 
-Consider the coefficient of ``mar`` (whether the subject is married or not). The values in the column are binary: 0 or 1, representing either not married or married. The value of the coefficient associated with ``mar``, :math:`\exp{(-.43)}`, is the value of ratio of *hazards* associated with being married, that is:
+Consider the coefficient of ``mar`` (whether the subject is married or not). The values in the column are binary: 0 or 1, representing either  unmarried or married. The value of the coefficient associated with ``mar``, :math:`\exp{(-.43)}`, is the value of ratio of *hazards* associated with being married, that is:
 
 .. math::
 
  \exp(-0.43) = \frac{\text{hazard of married subjects at time $t$}}{\text{hazard of unmarried subjects at time $t$}}
 
 
-Note that left-hand side is a constant (specifically, it's independent of time, :math:`t`), but the right-hand side has two factors that can vary with time. The *proportional assumption* is that this is true in reality. That is, hazards can change over time, but their ratio between levels remains a constant. Later we will deal with checking this assumption.
+Note that left-hand side is a constant (specifically, it's independent of time, :math:`t`), but the right-hand side has two factors that may vary with time. The *proportional hazard assumption* is that relationship is true. That is, hazards can change over time, but their ratio between levels remains a constant. Later we will deal with checking this assumption. However, in reality, it's very common for the hazard ratio to change over the study duration. The hazard ratio then has the interpretation of some sort of weighted average of period-specific hazard ratios. As a result, the hazard ratio may critically depend on the duration of the follow-up.
 
 
 Convergence
 -----------------------
 
-Fitting the Cox model to the data involves using iterative methods. *lifelines* takes extra effort to help with convergence, so please be attentive to any warnings that appear. Fixing any warnings will generally help convergence and decrease the number of iterative steps required. If you wish to see the fitting, there is a ``show_progress`` parameter in :meth:`~lifelines.fitters.coxph_fitter.CoxPHFitter.fit` function. For further help, see :ref:`Problems with convergence in the Cox Proportional Hazard Model`.
+Fitting the Cox model to the data involves using iterative methods. *lifelines* takes extra effort to help with convergence, so please be attentive to any warnings that appear. Fixing any warnings will generally help convergence and decrease the number of iterative steps required. If you wish to see more information during fitting, there is a ``show_progress`` parameter in :meth:`~lifelines.fitters.coxph_fitter.CoxPHFitter.fit` function. For further help, see :ref:`Problems with convergence in the Cox Proportional Hazard Model`.
 
-After fitting, the value of the maximum log-likelihood this available using :attr:`~lifelines.fitters.coxph_fitter.CoxPHFitter.log_likelihood`. The variance matrix of the coefficients is available under :attr:`~lifelines.fitters.coxph_fitter.CoxPHFitter.variance_matrix_`.
+After fitting, the value of the maximum log-likelihood this available using :attr:`~lifelines.fitters.coxph_fitter.CoxPHFitter.log_likelihood_`. The variance matrix of the coefficients is available under :attr:`~lifelines.fitters.coxph_fitter.CoxPHFitter.variance_matrix_`.
 
 
 Goodness of fit
@@ -131,8 +133,8 @@ Goodness of fit
 
 After fitting, you may want to know how "good" of a fit your model was to the data. A few methods the author has found useful is to
 
- - look at the concordance-index (see below section on :ref:`Model Selection in Survival Regression`), available as :attr:`~lifelines.fitters.coxph_fitter.CoxPHFitter.score_` or in the :meth:`~lifelines.fitters.coxph_fitter.CoxPHFitter.print_summary` as a measure of predictive accuracy.
- - look at the log-likelihood test result in the :meth:`~lifelines.fitters.coxph_fitter.CoxPHFitter.print_summary`
+ - look at the concordance-index (see below section on :ref:`Model Selection in Survival Regression`), available as :attr:`~lifelines.fitters.coxph_fitter.CoxPHFitter.concordance_index_` or in the :meth:`~lifelines.fitters.coxph_fitter.CoxPHFitter.print_summary` as a measure of predictive accuracy.
+ - look at the log-likelihood test result in the :meth:`~lifelines.fitters.coxph_fitter.CoxPHFitter.print_summary` or :meth:`~lifelines.fitters.coxph_fitter.CoxPHFitter.log_likelihood_ratio_test`
  - check the proportional hazards assumption with the :meth:`~lifelines.fitters.coxph_fitter.CoxPHFitter.check_assumptions` method. See section later on this page for more details.
 
 
@@ -178,6 +180,55 @@ Back to our original problem of predicting the event time of censored individual
 
 
 
+Penalties and sparse regression
+-----------------------------------------------
+
+It's possible to add a penalizer term to the Cox regression as well. One can use these to i) stabilize the coefficients, ii) shrink the estimates to 0, iii) encourages a Bayesian viewpoint, and iv) create sparse coefficients. Regression models, including the Cox model, include both an L1 and L2 penalty:
+
+.. math:: \frac{1}{2} \text{penalizer} \left((1-\text{l1\_ratio}) \cdot ||\beta||_2^2 + \text{l1\_ratio} \cdot ||\beta||_1\right)
+
+
+.. note:: It's not clear from the above, but intercept (when applicable) are not penalized.
+
+
+To use this in *lifelines*, both the ``penalizer`` and ``l1_ratio`` can be specified in the class creation:
+
+
+.. code:: python
+
+    from lifelines import CoxPHFitter
+    from lifelines.datasets import load_rossi
+
+    rossi = load_rossi()
+
+    cph = CoxPHFitter(penalizer=0.1, l1_ratio=1.0) # sparse solutions,
+    cph.fit(rossi, 'week', 'arrest')
+    cph.print_summary()
+
+
+Instead of a float, an *array* can be provided that is the same size as the number of estimated parameters. The values in the array
+are specific penalty coefficients for each covariate. This is useful for more complicated covariate structure. Some examples:
+
+i) you have lots of confounders you wish to penalizer, but not the main treatment(s).
+
+.. code:: python
+
+    from lifelines import CoxPHFitter
+    from lifelines.datasets import load_rossi
+
+    rossi = load_rossi()
+
+    # variable `fin` is the treatment of interest so don't penalize it at all
+    penalty = np.array([0, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5])
+
+    cph = CoxPHFitter(penalizer=penalty)
+    cph.fit(rossi, 'week', 'arrest')
+    cph.print_summary()
+
+ii) you have to `fuse categories together <https://stats.stackexchange.com/questions/146907/principled-way-of-collapsing-categorical-variables-with-many-levels>`_.
+
+
+
 Plotting the coefficients
 ------------------------------
 
@@ -220,12 +271,16 @@ holding everything else equal. This is useful to understand the impact of a cova
 
 The :meth:`~lifelines.fitters.coxph_fitter.CoxPHFitter.plot_covariate_groups` method can accept multiple covariates as well. This is useful for two purposes:
 
-1. There are derivative features in your dataset. For example, suppose you have included ``year`` and ``year**2`` in your dataset. It doesn't make sense to just vary ``year`` and leave ``year**2`` fixed. You'll need to specify manually the values the covariates take on in a N-d array or list (where N is the number of covariates being varied.)
+1. There are derivative features in your dataset. For example, suppose you have included ``prio`` and ``prio**2`` in your dataset. It doesn't make sense to just vary ``year`` and leave ``year**2`` fixed. You'll need to specify manually the values the covariates take on in a N-d array or list (where N is the number of covariates being varied.)
 
 .. code:: python
 
+    rossi_dataset['prio**2'] = rossi_dataset['prio'] ** 2
+
+    cph.fit(rossi_dataset, 'week', 'arrest')
+
     cph.plot_covariate_groups(
-        ['year', 'year**2'],
+        ['prio', 'prio**2'],
         [
             [0, 0],
             [1, 1],
@@ -240,8 +295,10 @@ The :meth:`~lifelines.fitters.coxph_fitter.CoxPHFitter.plot_covariate_groups` me
 
 .. code:: python
 
+    import numpy as np
+
     cph.plot_covariate_groups(
-        ['d1', 'd2' 'd3', 'd4', 'd5'],
+        ['d1', 'd2', 'd3', 'd4', 'd5'],
         np.eye(5),
         cmap='coolwarm')
 
@@ -268,15 +325,7 @@ To specify variables to be used in stratification, we define them in the call to
 
 .. code:: python
 
-    from lifelines.datasets import load_rossi
-    from lifelines import CoxPHFitter
-
-    rossi_dataset = load_rossi()
-    cph = CoxPHFitter()
-    cph.fit(rossi_dataset, 'week', event_col='arrest', strata=['race'])
-
-    cph.print_summary()  # access the results using cph.summary
-
+p
     """
     <lifelines.CoxPHFitter: fitted with 432 observations, 318 censored>
           duration col = 'week'
@@ -296,8 +345,10 @@ To specify variables to be used in stratification, we define them in the call to
     paro -0.09       0.92      0.20 -0.44   0.66      0.60       -0.47        0.30
     prio  0.09       1.10      0.03  3.21 <0.005      9.56        0.04        0.15
     ---
-    Concordance = 0.64
-    Likelihood ratio test = 109.63 on 6 df, -log2(p)=68.48
+    Concordance = 0.63
+    Partial AIC = 1253.13
+    log-likelihood ratio test = 32.73 on 6 df
+    -log2(p) of ll-ratio test = 16.37
     """
 
     cph.baseline_cumulative_hazard_.shape
@@ -313,6 +364,7 @@ When using sampling weights, it's correct to also change the standard error calc
 
 .. code:: python
 
+    import pandas as pd
     from lifelines import CoxPHFitter
 
     df = pd.DataFrame({
@@ -368,7 +420,22 @@ After fitting a Cox model, we can look back and compute important model residual
 Baseline hazard and survival
 -----------------------------------------------
 
-To access the non-parametric baseline hazard and baseline survival, one can use :attr:`~lifelines.fitters.coxph_fitter.CoxPHFitter.baseline_hazard_` and :attr:`~lifelines.fitters.coxph_fitter.CoxPHFitter.baseline_survival_` respectively. These are computed using Breslow's approximation. If you are interested in a _parametric_ baseline hazard, please see `this issue <https://github.com/CamDavidsonPilon/lifelines/issues/812>`_.
+Normally, the Cox model is *semi-parametric*, which means that its baseline hazard, :math:`h_0(t)`, has no functional form. This is the default for *lifelines*. However, it is sometimes valuable to produce a parametric baseline instead. There is an option to create a parametric baseline with splines:
+
+
+.. code:: python
+
+
+    from lifelines.datasets import load_rossi
+    from lifelines import CoxPHFitter
+
+    rossi_dataset = load_rossi()
+
+    cph = CoxPHFitter(baseline_estimation_method="spline")
+    cph.fit(rossi_dataset, 'week', event_col='arrest')
+
+To access the baseline hazard and baseline survival, one can use :attr:`~lifelines.fitters.coxph_fitter.CoxPHFitter.baseline_hazard_` and :attr:`~lifelines.fitters.coxph_fitter.CoxPHFitter.baseline_survival_` respectively.
+
 
 Parametric survival models
 ==================================
@@ -444,7 +511,9 @@ The Weibull AFT model is implemented under :class:`~lifelines.fitters.weibull_af
     rho_    _intercept  0.339      1.404     0.089  3.809 <0.0005    12.808       0.165       0.514
     ---
     Concordance = 0.640
-    Log-likelihood ratio test = 33.416 on 7 df, -log2(p)=15.462
+    AIC = 1377.833
+    log-likelihood ratio test = 33.416 on 7 df
+    -log2(p) of ll-ratio test = 15.462
     """
 
 From above, we can see that ``prio``, which is the number of previous incarcerations, has a large negative coefficient. This means that each addition incarcerations changes a subject's mean/median survival time by :math:`\exp(-0.066) = 0.936`, approximately a 7% decrease in mean/median survival time. What is the mean/median survival time?
@@ -528,6 +597,8 @@ The plotting API is the same as in :class:`~lifelines.fitters.coxph_fitter.CoxPH
 
 .. code:: python
 
+    from matplotlib import pyplot as plt
+
     wft = WeibullAFTFitter().fit(rossi, 'week', 'arrest', ancillary_df=True)
     wft.plot()
 
@@ -582,7 +653,7 @@ Given a new subject, we ask questions about their future survival? When are they
     aft.predict_expectation(X, ancillary_df=X)
 
 
-When predicting time remaining for uncensored individuals, you can use the `conditional_after` kwarg:
+When predicting time remaining for censored individuals, you can use the `conditional_after` kwarg:
 
 
 .. code:: python
@@ -596,12 +667,12 @@ When predicting time remaining for uncensored individuals, you can use the `cond
     aft.predict_percentile(X, p=0.9, ancillary_df=censored_X, conditional_after=censored_subjects_last_obs)
 
 
-There are two hyper-parameters that can be used to to achieve a better test score. These are ``penalizer`` and ``l1_ratio`` in the call to :class:`~lifelines.fitters.weibull_aft_fitter.WeibullAFTFitter`. The penalizer is similar to scikit-learn's ``ElasticNet`` model, see their `docs <https://scikit-learn.org/stable/modules/generated/sklearn.linear_model.ElasticNet.html>`_.
+There are two hyper-parameters that can be used to to achieve a better test score. These are ``penalizer`` and ``l1_ratio`` in the call to :class:`~lifelines.fitters.weibull_aft_fitter.WeibullAFTFitter`. The penalizer is similar to scikit-learn's ``ElasticNet`` model, see their `docs <https://scikit-learn.org/stable/modules/generated/sklearn.linear_model.ElasticNet.html>`_. (However, *lifelines* will also accept an array for custom penalizer per variable, see `Cox docs above <https://lifelines.readthedocs.io/en/latest/Survival%20Regression.html#penalties-and-sparse-regression>`_)
 
 .. code:: python
 
 
-    aft_with_elastic_penalty = WeibullAFTFitter(penalizer=4.0, l1_ratio=1.0)
+    aft_with_elastic_penalty = WeibullAFTFitter(penalizer=1e-4, l1_ratio=1.0)
     aft_with_elastic_penalty.fit(rossi, 'week', 'arrest')
     aft_with_elastic_penalty.predict_median(rossi)
 
@@ -630,8 +701,10 @@ There are two hyper-parameters that can be used to to achieve a better test scor
             _intercept  0.00       1.00      0.19  0.00   1.00      0.00       -0.38        0.38
     rho_    _intercept -0.00       1.00       nan   nan    nan       nan         nan         nan
     ---
-    Concordance = 0.60
-    Log-likelihood ratio test = -4028.65 on 7 df, -log2(p)=-0.00
+    Concordance = 0.64
+    AIC = 1377.91
+    log-likelihood ratio test = 33.34 on 7 df
+    -log2(p) of ll-ratio test = 15.42
     """
 
 
@@ -659,7 +732,6 @@ For a flexible and *smooth* parametric model, there is the :class:`~lifelines.fi
 
 .. code:: python
 
-
     from lifelines import GeneralizedGammaRegressionFitter
     from lifelines.datasets import load_rossi
 
@@ -667,7 +739,7 @@ For a flexible and *smooth* parametric model, there is the :class:`~lifelines.fi
     df['constant'] = 1.
 
     # this will regress df against all 3 parameters
-    ggf = GeneralizedGammaRegressionFitter().fit(df, 'week', 'arrest')
+    ggf = GeneralizedGammaRegressionFitter(penalizer=0.1).fit(df, 'week', 'arrest')
     ggf.print_summary()
 
 
@@ -678,7 +750,7 @@ For a flexible and *smooth* parametric model, there is the :class:`~lifelines.fi
         'lambda_': ['constant']
     }
 
-    ggf = GeneralizedGammaRegressionFitter().fit(df, 'week', 'arrest', regressors=regressors)
+    ggf = GeneralizedGammaRegressionFitter(penalizer=0.1).fit(df, 'week', 'arrest', regressors=regressors)
     ggf.print_summary()
 
 
@@ -960,14 +1032,60 @@ Model selection based on residuals
 
 The sections `Testing the Proportional Hazard Assumptions`_ and `Assessing Cox model fit using residuals`_ may be useful for modeling your data better.
 
-.. note:: Work is being done to extend residual methods to AFT models. Stay tuned.
+.. note:: Work is being done to extend residual methods to all regression models. Stay tuned.
 
 
-Model selection based on predictive power
------------------------------------------------
+Model selection based on predictive power and fit
+---------------------------------------------------
 
 If censoring is present, it's not appropriate to use a loss function like mean-squared-error or
-mean-absolute-loss. Instead, one measure is the concordance-index, also known as the c-index. This measure
+mean-absolute-loss. This is because the difference between a censored value and the predicted value could be
+due to poor prediction *or* due to censoring. Below we introduce alternative ways to measure prediction performance.
+
+Out-of-sample validation
+****************************
+
+
+In this author's opinion, the best way to measure predictive performance is evaluating the log-likelihood on out-of-sample data. The log-likelihood correctly handles any type of censoring, and is precisely what we are maximizing in the model training. The in-sample log-likelihood is available under ``log_likelihood_`` of any regression model. For out-of-sample data, the  :meth:`~lifelines.fitters.cox_ph_fitter.CoxPHFitter.score` method (available on all regression models) can be used. This returns the *average evaluation of the out-of-sample log-likelihood*. We want to maximize this.
+
+.. code:: python
+
+    from lifelines import CoxPHFitter
+    from lifelines.datasets import load_rossi
+
+    rossi = load_rossi().sample(frac=1.0)
+    train_rossi = rossi.iloc[:400]
+    test_rossi = rossi.iloc[400:]
+
+    cph_l2 = CoxPHFitter(penalizer=0.1, l1_ratio=0.).fit(train_rossi, 'week', 'arrest')
+    cph_l1 = CoxPHFitter(penalizer=0.1, l1_ratio=1.).fit(train_rossi, 'week', 'arrest')
+
+    print(cph_l2.score(test_rossi))
+    print(cph_l1.score(test_rossi)) # better model
+
+
+Within-sample validation
+****************************
+
+For within-sample validation, the AIC is a great metric for comparing models as it relies on the log-likelihood. It's available under ``AIC_`` for parametric models, and ``AIC_partial_`` for Cox models (because the Cox model maximizes a *partial* log-likelihood, it can't be reliably compared to parametric model's AIC.)
+
+
+.. code:: python
+
+    from lifelines import CoxPHFitter
+    from lifelines.datasets import load_rossi
+
+    rossi = load_rossi()
+
+    cph_l2 = CoxPHFitter(penalizer=0.1, l1_ratio=0.).fit(rossi, 'week', 'arrest')
+    cph_l1 = CoxPHFitter(penalizer=0.1, l1_ratio=1.).fit(rossi, 'week', 'arrest')
+
+    print(cph_l2.AIC_partial_) # lower is better
+    print(cph_l1.AIC_partial_)
+
+
+
+Another censoring-sensitive measure is the concordance-index, also known as the c-index. This measure
 evaluates the accuracy of the *ranking* of predicted time. It is in fact a generalization
 of AUC, another common loss function, and is interpreted similarly:
 
@@ -975,7 +1093,7 @@ of AUC, another common loss function, and is interpreted similarly:
 * 1.0 is perfect concordance and,
 * 0.0 is perfect anti-concordance (multiply predictions with -1 to get 1.0)
 
-Fitted survival models typically have a concordance index between 0.55 and 0.75 (this may seem bad, but even a perfect model has a lot of noise than can make a high score impossible). In *lifelines*, a fitted model's concordance-index is present in the output of ``print_summary()``, but also available under the ``score_`` property. Generally, the measure is implemented in *lifelines* under :func:`lifelines.utils.concordance_index` and accepts the actual times (along with any censored subjects) and the predicted times.
+Fitted survival models typically have a concordance index between 0.55 and 0.75 (this may seem bad, but even a perfect model has a lot of noise than can make a high score impossible). In *lifelines*, a fitted model's concordance-index is present in the output of :meth:`~lifelines.fitters.cox_ph_fitter.CoxPHFitter.score`, but also available under the ``concordance_index_`` property. Generally, the measure is implemented in *lifelines* under :func:`lifelines.utils.concordance_index` and accepts the actual times (along with any censored subjects) and the predicted times.
 
 .. code:: python
 
@@ -987,21 +1105,25 @@ Fitted survival models typically have a concordance index between 0.55 and 0.75 
     cph = CoxPHFitter()
     cph.fit(rossi, duration_col="week", event_col="arrest")
 
-    # Three ways to view the c-index:
+    # fours ways to view the c-index:
     # method one
     cph.print_summary()
 
     # method two
-    print(cph.score_)
+    print(cph.concordance_index_)
 
     # method three
+    print(cph.score(rossi, scoring_method="concordance_index"))
+
+    # method four
     from lifelines.utils import concordance_index
     print(concordance_index(rossi['week'], -cph.predict_partial_hazard(rossi), rossi['arrest']))
 
 .. note:: Remember, the concordance score evaluates the relative rankings of subject's event times. Thus, it is scale and shift invariant (i.e. you can multiple by a positive constant, or add a constant, and the rankings won't change). A model maximized for concordance-index does not necessarily give good predicted *times*, but will give good predicted *rankings*.
 
 
-However, there are other, arguably better, methods to measure the fit of a model. Included in ``print_summary`` is the log-likelihood, which can be used in an `AIC calculation <https://en.wikipedia.org/wiki/Akaike_information_criterion>`_, and the `log-likelihood ratio statistic <https://en.wikipedia.org/wiki/Likelihood-ratio_test>`_. Generally, I personally loved this article by Frank Harrell, `"Statistically Efficient Ways to Quantify Added Predictive Value of New Measurements" <http://www.fharrell.com/post/addvalue/>`_.
+Cross validation
+****************************
 
 *lifelines* has an implementation of k-fold cross validation under :func:`lifelines.utils.k_fold_cross_validation`. This function accepts an instance of a regression fitter (either :class:`~lifelines.fitters.coxph_fitter.CoxPHFitter` of :class:`~lifelines.fitters.aalen_additive_fitter.AalenAdditiveFitter`), a dataset, plus ``k`` (the number of folds to perform, default 5). On each fold, it splits the data
 into a training set and a testing set fits itself on the training set and evaluates itself on the testing set (using the concordance measure by default).
@@ -1016,12 +1138,11 @@ into a training set and a testing set fits itself on the training set and evalua
         cph = CoxPHFitter()
         scores = k_fold_cross_validation(cph, regression_dataset, 'T', event_col='E', k=3)
         print(scores)
-        print(np.mean(scores))
-        print(np.std(scores))
+        #[-2.9896, -3.08810, -3.02747]
 
-        #[ 0.5896  0.5358  0.5028]
-        # 0.542
-        # 0.035
+        scores = k_fold_cross_validation(cph, regression_dataset, 'T', event_col='E', k=3, scoring_method="concordance_index")
+        print(scores)
+        # [0.5449, 0.5587, 0.6179]
 
 Also, lifelines has wrappers for `compatibility with scikit learn`_ for making cross-validation and grid-search even easier.
 

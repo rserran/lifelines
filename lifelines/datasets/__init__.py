@@ -90,7 +90,7 @@ def load_holly_molly_polly(**kwargs):
         4  P       1        1            0          20   0   20
 
     """
-    return _load_dataset("holly_molly_polly.tsv", sep="\s", **kwargs)
+    return _load_dataset("holly_molly_polly.tsv", sep=r"\s", **kwargs)
 
 
 def load_leukemia(**kwargs):
@@ -544,3 +544,16 @@ def load_lymph_node(**kwargs):
     Hosmer, D.W. and Lemeshow, S. and May, S. (2008). Applied Survival Analysis: Regression Modeling of Time to Event Data: Second Edition, John Wiley and Sons Inc., New York, NY
     """
     return _load_dataset("lymph_node.csv", index_col=0, **kwargs)
+
+
+def load_c_botulinum_lag_phase(**kwargs):
+    """
+    A dataset from [1] that represents the duration of the lag phase for C. botulinum, measured in days, at 30C. The data is left and right censored.
+    Note that the table does not have 6% NaCl, but the authors mention no growth occurred (we can infer lag time > 85D then)
+
+    References
+    -----------
+    Montville, THOMAS J. "Interaction of pH and NaCl on culture density of Clostridium botulinum 62A." Appl. Environ. Microbiol. 46.4 (1983): 961-963.
+
+    """
+    return _load_dataset("c_botulinum_lag_phase.csv", **kwargs)

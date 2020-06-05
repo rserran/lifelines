@@ -5,7 +5,7 @@ import pytest
 import os
 import numpy as np
 import pandas as pd
-from pandas.util.testing import assert_frame_equal, assert_series_equal
+from pandas.testing import assert_frame_equal, assert_series_equal
 import numpy.testing as npt
 from numpy.linalg import norm, lstsq
 from numpy.random import randn
@@ -15,6 +15,7 @@ from lifelines.datasets import load_regression_dataset, load_larynx, load_walton
 from lifelines import utils
 from lifelines import metrics
 from lifelines.utils.sklearn_adapter import sklearn_adapter
+from lifelines.utils.safe_exp import safe_exp
 
 
 def test_format_p_values():
@@ -186,12 +187,9 @@ def test_qth_survival_times_with_multivariate_q():
         pd.DataFrame([[40, 28], [25, 15]], index=[0.2, 0.5], columns=["sf", "sf**2"]),
     )
     assert_frame_equal(
-        utils.qth_survival_times([0.2, 0.5], sf_multi_df["sf"]),
-        pd.DataFrame([40, 25], index=[0.2, 0.5], columns=["sf"]),
+        utils.qth_survival_times([0.2, 0.5], sf_multi_df["sf"]), pd.DataFrame([40, 25], index=[0.2, 0.5], columns=["sf"])
     )
-    assert_frame_equal(
-        utils.qth_survival_times(0.5, sf_multi_df), pd.DataFrame([[25, 15]], index=[0.5], columns=["sf", "sf**2"])
-    )
+    assert_frame_equal(utils.qth_survival_times(0.5, sf_multi_df), pd.DataFrame([[25, 15]], index=[0.5], columns=["sf", "sf**2"]))
     assert utils.qth_survival_times(0.5, sf_multi_df["sf"]) == 25
 
 
@@ -381,23 +379,8 @@ def test_cross_validator_returns_fitters_k_results():
 
 def test_cross_validator_with_predictor():
     cf = CoxPHFitter()
-    results = utils.k_fold_cross_validation(
-        cf, load_regression_dataset(), duration_col="T", event_col="E", k=3, predictor="predict_expectation"
-    )
+    results = utils.k_fold_cross_validation(cf, load_regression_dataset(), duration_col="T", event_col="E", k=3)
     assert len(results) == 3
-
-
-def test_cross_validator_with_predictor_and_kwargs():
-    cf = CoxPHFitter()
-    results_06 = utils.k_fold_cross_validation(
-        cf,
-        load_regression_dataset(),
-        duration_col="T",
-        k=3,
-        predictor="predict_percentile",
-        predictor_kwargs={"p": 0.6},
-    )
-    assert len(results_06) == 3
 
 
 def test_cross_validator_with_stratified_cox_model():
@@ -406,15 +389,10 @@ def test_cross_validator_with_stratified_cox_model():
 
 
 def test_cross_validator_with_specific_loss_function():
-    def square_loss(y_actual, y_pred):
-        return ((y_actual - y_pred) ** 2).mean()
-
     cf = CoxPHFitter()
     results_sq = utils.k_fold_cross_validation(
-        cf, load_regression_dataset(), evaluation_measure=square_loss, duration_col="T", event_col="E"
+        cf, load_regression_dataset(), scoring_method="concordance_index", duration_col="T", event_col="E"
     )
-    results_con = utils.k_fold_cross_validation(cf, load_regression_dataset(), duration_col="T", event_col="E")
-    assert list(results_sq) != list(results_con)
 
 
 def test_concordance_index():
@@ -494,9 +472,7 @@ def test_survival_table_from_events_raises_value_error_if_too_early_births():
 class TestLongDataFrameUtils(object):
     @pytest.fixture
     def seed_df(self):
-        df = pd.DataFrame.from_records(
-            [{"id": 1, "var1": 0.1, "T": 10, "E": 1}, {"id": 2, "var1": 0.5, "T": 12, "E": 0}]
-        )
+        df = pd.DataFrame.from_records([{"id": 1, "var1": 0.1, "T": 10, "E": 1}, {"id": 2, "var1": 0.5, "T": 12, "E": 0}])
         return utils.to_long_format(df, "T")
 
     @pytest.fixture
@@ -562,16 +538,7 @@ class TestLongDataFrameUtils(object):
         df = seed_df.pipe(utils.add_covariate_to_timeline, cv, "id", "t", "E", overwrite=False)
 
         expected = pd.DataFrame.from_records(
-            [
-                {
-                    "E": True,
-                    "id": 1,
-                    "stop": 10.0,
-                    "start": 0,
-                    "var1": new_value_at_time_0 + old_value_at_time_0,
-                    "var2": 2.0,
-                }
-            ]
+            [{"E": True, "id": 1, "stop": 10.0, "start": 0, "var1": new_value_at_time_0 + old_value_at_time_0, "var2": 2.0}]
         )
         assert_frame_equal(df, expected, check_like=True)
 
@@ -583,9 +550,7 @@ class TestLongDataFrameUtils(object):
 
         df = seed_df.pipe(utils.add_covariate_to_timeline, cv, "id", "t", "E", overwrite=True)
 
-        expected = pd.DataFrame.from_records(
-            [{"E": True, "id": 1, "stop": 10.0, "start": 0, "var1": new_value_at_time_0}]
-        )
+        expected = pd.DataFrame.from_records([{"E": True, "id": 1, "stop": 10.0, "start": 0, "var1": new_value_at_time_0}])
         assert_frame_equal(df, expected, check_like=True)
 
     def test_enum_flag(self, seed_df, cv1, cv2):
@@ -601,9 +566,7 @@ class TestLongDataFrameUtils(object):
             # Windows Numpy and Pandas sometimes have int32 or int64 as default dtype
             if os.name == "nt" and "int32" in str(e) and "int64" in str(e):
                 assert_series_equal(
-                    df["enum"].loc[idx],
-                    pd.Series(np.arange(1, n + 1), dtype=df["enum"].loc[idx].dtypes),
-                    check_names=False,
+                    df["enum"].loc[idx], pd.Series(np.arange(1, n + 1), dtype=df["enum"].loc[idx].dtypes), check_names=False
                 )
             else:
                 raise e
@@ -684,9 +647,7 @@ class TestLongDataFrameUtils(object):
 
     def test_cumulative_sum(self):
         seed_df = pd.DataFrame.from_records([{"id": 1, "start": 0, "stop": 5, "E": 1}])
-        cv = pd.DataFrame.from_records(
-            [{"id": 1, "t": 0, "var4": 1}, {"id": 1, "t": 1, "var4": 1}, {"id": 1, "t": 3, "var4": 1}]
-        )
+        cv = pd.DataFrame.from_records([{"id": 1, "t": 0, "var4": 1}, {"id": 1, "t": 1, "var4": 1}, {"id": 1, "t": 3, "var4": 1}])
 
         df = seed_df.pipe(utils.add_covariate_to_timeline, cv, "id", "t", "E", cumulative_sum=True)
         expected = pd.DataFrame.from_records(
@@ -719,9 +680,7 @@ class TestLongDataFrameUtils(object):
 
     def test_covariates_from_event_matrix_with_simple_addition(self):
 
-        base_df = pd.DataFrame(
-            [[1, 0, 5, 1], [2, 0, 4, 1], [3, 0, 8, 1], [4, 0, 4, 1]], columns=["id", "start", "stop", "e"]
-        )
+        base_df = pd.DataFrame([[1, 0, 5, 1], [2, 0, 4, 1], [3, 0, 8, 1], [4, 0, 4, 1]], columns=["id", "start", "stop", "e"])
 
         event_df = pd.DataFrame([[1, 1], [2, 2], [3, 3], [4, None]], columns=["id", "poison"])
         cv = utils.covariates_from_event_matrix(event_df, "id")
@@ -744,9 +703,7 @@ class TestLongDataFrameUtils(object):
 
     def test_covariates_from_event_matrix(self):
 
-        base_df = pd.DataFrame(
-            [[1, 0, 5, 1], [2, 0, 4, 1], [3, 0, 8, 1], [4, 0, 4, 1]], columns=["id", "start", "stop", "e"]
-        )
+        base_df = pd.DataFrame([[1, 0, 5, 1], [2, 0, 4, 1], [3, 0, 8, 1], [4, 0, 4, 1]], columns=["id", "start", "stop", "e"])
 
         event_df = pd.DataFrame(
             [[1, 1, None, 2], [2, None, 5, None], [3, 3, 3, 7]], columns=["id", "promotion", "movement", "raise"]
@@ -837,9 +794,7 @@ class TestLongDataFrameUtils(object):
         rossi = load_rossi()
         rossi["id"] = np.arange(rossi.shape[0])
 
-        long_rossi = utils.to_episodic_format(
-            rossi, duration_col="week", event_col="arrest", id_col="id", time_gaps=1000.0
-        )
+        long_rossi = utils.to_episodic_format(rossi, duration_col="week", event_col="arrest", id_col="id", time_gaps=1000.0)
 
         # using astype(int) would fail on Windows because int32 and int64 are used as dtype
         long_rossi["week"] = long_rossi["stop"].astype(rossi["week"].dtype)
@@ -1009,11 +964,7 @@ class TestSklearnAdapter:
 
         base_model = sklearn_adapter(WeibullAFTFitter, event_col="E")
 
-        grid_params = {
-            "penalizer": 10.0 ** np.arange(-2, 3),
-            "l1_ratio": [0.05, 0.5, 0.95],
-            "model_ancillary": [True, False],
-        }
+        grid_params = {"penalizer": 10.0 ** np.arange(-2, 3), "l1_ratio": [0.05, 0.5, 0.95], "model_ancillary": [True, False]}
         # note the n_jobs
         clf = GridSearchCV(base_model(), grid_params, cv=4, n_jobs=-1)
         clf.fit(X, Y)
@@ -1106,3 +1057,44 @@ def test_find_best_parametric_model_can_accept_other_models():
     T = np.random.exponential(2, 1000)
     model, score = utils.find_best_parametric_model(T, additional_models=[ExponentialFitter(), ExponentialFitter()])
     assert True
+
+
+def test_find_best_parametric_model_with_BIC():
+    T = np.random.exponential(2, 1000)
+    model, score = utils.find_best_parametric_model(T, scoring_method="BIC")
+    assert True
+
+
+def test_find_best_parametric_model_works_for_left_censoring():
+    T = np.random.exponential(2, 100)
+    model, score = utils.find_best_parametric_model(T, censoring_type="left", show_progress=True)
+    assert True
+
+
+def test_find_best_parametric_model_works_for_interval_censoring():
+    T_1 = np.random.exponential(2, 100)
+    T_2 = T_1 + 1
+    model, score = utils.find_best_parametric_model((T_1, T_2), censoring_type="interval", show_progress=True)
+    assert True
+
+
+def test_find_best_parametric_model_works_with_weights_and_entry():
+    T = np.random.exponential(5, 100)
+    W = np.random.randint(1, 5, size=100)
+    entry = np.random.exponential(0.01, 100)
+    model, score = utils.find_best_parametric_model(T, weights=W, entry=entry, show_progress=True)
+    assert True
+
+
+def test_safe_exp():
+    from lifelines.utils.safe_exp import MAX
+
+    assert safe_exp(4.0) == np.exp(4.0)
+    assert safe_exp(MAX) == np.exp(MAX)
+    assert safe_exp(MAX + 1) == np.exp(MAX)
+
+    from autograd import grad
+
+    assert grad(safe_exp)(4.0) == np.exp(4.0)
+    assert grad(safe_exp)(MAX) == np.exp(MAX)
+    assert grad(safe_exp)(MAX + 1) == np.exp(MAX)

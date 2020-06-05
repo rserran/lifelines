@@ -1,6 +1,6 @@
 .. _code_directive:
 
-.. image:: http://i.imgur.com/EOowdSD.png
+.. image:: https://i.imgur.com/EOowdSD.png
 
 -------------------------------------
 
@@ -18,8 +18,16 @@ Install via ``pip``:
 
     pip install lifelines
 
+OR
 
-Kaplan-Meier Nelson-Aalen, and parametric models
+Install via `conda <https://anaconda.org/conda-forge/lifelines>`_:
+
+.. code-block:: console
+
+    conda install -c conda-forge lifelines
+
+
+Kaplan-Meier, Nelson-Aalen, and parametric models
 ---------------------------------------------------
 
 .. note:: For readers looking for an introduction to survival analysis, it's recommended to start at :ref:`Introduction to Survival Analysis`
@@ -96,24 +104,27 @@ A useful summary stat is the median survival time, which represents when 50% of 
     from lifelines.utils import median_survival_times
 
     median_ = kmf.median_survival_time_
-    median_confidence_interval_ = median_survival_times(kmf.confidence_interval_))
+    median_confidence_interval_ = median_survival_times(kmf.confidence_interval_)
 
 
 Instead of the Kaplan-Meier estimator, you may be interested in a parametric model. *lifelines* has builtin parametric models. For example, Weibull, Log-Normal, Log-Logistic, and more.
 
 .. code:: python
 
+    import matplotlib.pyplot as plt
+    import numpy as np
     from lifelines import *
 
-    fig, axes = plt.subplots(2, 3, figsize=(9, 5))
+    fig, axes = plt.subplots(3, 3, figsize=(13.5, 7.5))
 
     kmf = KaplanMeierFitter().fit(T, E, label='KaplanMeierFitter')
     wbf = WeibullFitter().fit(T, E, label='WeibullFitter')
-    exf = ExponentialFitter().fit(T, E, label='ExponentalFitter')
+    exf = ExponentialFitter().fit(T, E, label='ExponentialFitter')
     lnf = LogNormalFitter().fit(T, E, label='LogNormalFitter')
     llf = LogLogisticFitter().fit(T, E, label='LogLogisticFitter')
     pwf = PiecewiseExponentialFitter([40, 60]).fit(T, E, label='PiecewiseExponentialFitter')
     ggf = GeneralizedGammaFitter().fit(T, E, label='GeneralizedGammaFitter')
+    sf = SplineFitter(np.percentile(T.loc[E.astype(bool)], [0, 50, 100])).fit(T, E, label='SplineFitter')
 
     wbf.plot_survival_function(ax=axes[0][0])
     exf.plot_survival_function(ax=axes[0][1])
@@ -121,7 +132,8 @@ Instead of the Kaplan-Meier estimator, you may be interested in a parametric mod
     kmf.plot_survival_function(ax=axes[1][0])
     llf.plot_survival_function(ax=axes[1][1])
     pwf.plot_survival_function(ax=axes[1][2])
-    ggf.plot_survival_function(ax=axes[1][2])
+    ggf.plot_survival_function(ax=axes[2][0])
+    sf.plot_survival_function(ax=axes[2][1])
 
 .. image:: images/waltons_survival_function.png
 
@@ -273,7 +285,7 @@ The input of the ``fit`` method's API in a regression model is different. All th
     :width: 620px
     :align: center
 
-The same dataset, but with a *Weibull accelerated failure time model*. This model was two parameters (see docs `here <https://lifelines.readthedocs.io/en/latest/lifelines.fitters.html#module-lifelines.fitters.weibull_aft_fitter>`_), and we can choose to model both using our covariates or just one. Below we model just the scale parameter, ``lambda_``.
+The same dataset, but with a *Weibull accelerated failure time model*. This model was two parameters (see docs `here <https://lifelines.readthedocs.io/en/latest/fitters/regression/WeibullAFTFitter.html>`_), and we can choose to model both using our covariates or just one. Below we model just the scale parameter, ``lambda_``.
 
 .. code:: python
 
@@ -316,7 +328,7 @@ The same dataset, but with a *Weibull accelerated failure time model*. This mode
     :width: 620px
     :align: center
 
-Other AFT models are available as well, see `here <https://lifelines.readthedocs.io/en/latest/Survival%20Regression.html#the-log-normal-and-log-logistic-aft-model>`_. An alternative regression model is Aalen's Additive model, which has time-varying hazards:
+Other AFT models are available as well, see `here <https://lifelines.readthedocs.io/en/latest/Survival%20Regression.html#the-log-normal-and-log-logistic-aft-models>`_. An alternative regression model is Aalen's Additive model, which has time-varying hazards:
 
 .. code:: python
 

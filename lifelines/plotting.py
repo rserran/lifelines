@@ -1,13 +1,37 @@
 # -*- coding: utf-8 -*-
 
 import warnings
+from typing import Union
+
 import numpy as np
-from lifelines.utils import coalesce, CensoringType
 from scipy import stats
 from matplotlib import pyplot as plt
+from matplotlib.ticker import MaxNLocator
+import pandas as pd
+
+from lifelines.utils import coalesce, CensoringType
 
 
-__all__ = ["add_at_risk_counts", "plot_lifetimes", "qq_plot", "cdf_plot", "rmst_plot", "loglogs_plot"]
+__all__ = [
+    "add_at_risk_counts",
+    "plot_lifetimes",
+    "plot_interval_censored_lifetimes",
+    "qq_plot",
+    "cdf_plot",
+    "rmst_plot",
+    "loglogs_plot",
+]
+
+
+def _iloc(x, i):
+    """
+    Returns the item at index i or items at indices i from x,
+    where x is a numpy array or pd.Series.
+    """
+    try:
+        return x.iloc[i]
+    except AttributeError:
+        return x[i]
 
 
 def get_distribution_name_of_lifelines_model(model):
@@ -64,14 +88,16 @@ def cdf_plot(model, timeline=None, ax=None, **plot_kwargs):
 
     if CensoringType.is_left_censoring(model):
         empirical_kmf = KaplanMeierFitter().fit_left_censoring(
-            model.durations, model.event_observed, label=COL_EMP, timeline=timeline
+            model.durations, model.event_observed, label=COL_EMP, timeline=timeline, weights=model.weights, entry=model.entry
         )
     elif CensoringType.is_right_censoring(model):
         empirical_kmf = KaplanMeierFitter().fit_right_censoring(
-            model.durations, model.event_observed, label=COL_EMP, timeline=timeline
+            model.durations, model.event_observed, label=COL_EMP, timeline=timeline, weights=model.weights, entry=model.entry
         )
     elif CensoringType.is_interval_censoring(model):
-        raise NotImplementedError("lifelines does not have a non-parametric interval model yet.")
+        empirical_kmf = KaplanMeierFitter().fit_interval_censoring(
+            model.lower_bound, model.upper_bound, label=COL_EMP, timeline=timeline, weights=model.weights, entry=model.entry
+        )
 
     empirical_kmf.plot_cumulative_density(ax=ax, **plot_kwargs)
 
@@ -104,27 +130,28 @@ def rmst_plot(model, model2=None, t=np.inf, ax=None, text_position=None, **plot_
 
     Examples
     ---------
+    .. code:: python
 
-    >>> from lifelines.utils import restricted_mean_survival_time
-    >>> from lifelines.datasets import load_waltons
-    >>> from lifelines.plotting import rmst_plot
-    >>>
-    >>> df = load_waltons()
-    >>> ix = df['group'] == 'miR-137'
-    >>> T, E = df['T'], df['E']
-    >>> time_limit = 50
-    >>>
-    >>> kmf_exp = KaplanMeierFitter().fit(T[ix], E[ix], label='exp')
-    >>> kmf_con = KaplanMeierFitter().fit(T[~ix], E[~ix], label='control')
-    >>>
-    >>> ax = plt.subplot(311)
-    >>> rmst_plot(kmf_exp, t=time_limit, ax=ax)
-    >>>
-    >>> ax = plt.subplot(312)
-    >>> rmst_plot(kmf_con, t=time_limit, ax=ax)
-    >>>
-    >>> ax = plt.subplot(313)
-    >>> rmst_plot(kmf_exp, model2=kmf_con, t=time_limit, ax=ax)
+        from lifelines.utils import restricted_mean_survival_time
+        from lifelines.datasets import load_waltons
+        from lifelines.plotting import rmst_plot
+
+        df = load_waltons()
+        ix = df['group'] == 'miR-137'
+        T, E = df['T'], df['E']
+        time_limit = 50
+
+        kmf_exp = KaplanMeierFitter().fit(T[ix], E[ix], label='exp')
+        kmf_con = KaplanMeierFitter().fit(T[~ix], E[~ix], label='control')
+
+        ax = plt.subplot(311)
+        rmst_plot(kmf_exp, t=time_limit, ax=ax)
+
+        ax = plt.subplot(312)
+        rmst_plot(kmf_con, t=time_limit, ax=ax)
+
+        ax = plt.subplot(313)
+        rmst_plot(kmf_exp, model2=kmf_con, t=time_limit, ax=ax)
 
 
 
@@ -173,9 +200,7 @@ def rmst_plot(model, model2=None, t=np.inf, ax=None, text_position=None, **plot_
         )
 
         ax.text(
-            text_position[0],
-            text_position[1],
-            "RMST(%s) -\n   RMST(%s)=%.3f" % (model._label, model2._label, rmst - rmst2),
+            text_position[0], text_position[1], "RMST(%s) -\n   RMST(%s)=%.3f" % (model._label, model2._label, rmst - rmst2)
         )  # dynamically pick this.
     else:
         rmst = restricted_mean_survival_time(model, t=t)
@@ -208,14 +233,18 @@ def qq_plot(model, ax=None, **plot_kwargs):
 
     Examples
     ---------
+    .. code:: python
 
-    >>> from lifelines import *
-    >>> from lifelines.plotting import qq_plot
-    >>> from lifelines.datasets import load_rossi
-    >>> df = load_rossi()
-    >>> wf = WeibullFitter().fit(df['week'], df['arrest'])
-    >>> qq_plot(wf)
+        from lifelines import *
+        from lifelines.plotting import qq_plot
+        from lifelines.datasets import load_rossi
+        df = load_rossi()
+        wf = WeibullFitter().fit(df['week'], df['arrest'])
+        qq_plot(wf)
 
+    Notes
+    ------
+    The interval censoring case uses the mean between the upper and lower bounds.
 
     """
     from lifelines.utils import qth_survival_times
@@ -231,15 +260,25 @@ def qq_plot(model, ax=None, **plot_kwargs):
     COL_THEO = "fitted %s quantiles" % dist
 
     if CensoringType.is_left_censoring(model):
-        kmf = KaplanMeierFitter().fit_left_censoring(model.durations, model.event_observed, label=COL_EMP)
+        kmf = KaplanMeierFitter().fit_left_censoring(
+            model.durations, model.event_observed, label=COL_EMP, weights=model.weights, entry=model.entry
+        )
+        sf, cdf = kmf.survival_function_[COL_EMP], kmf.cumulative_density_[COL_EMP]
     elif CensoringType.is_right_censoring(model):
-        kmf = KaplanMeierFitter().fit_right_censoring(model.durations, model.event_observed, label=COL_EMP)
-    elif CensoringType.is_interval_censoring(model):
-        raise NotImplementedError("lifelines does not have a non-parametric interval model yet.")
+        kmf = KaplanMeierFitter().fit_right_censoring(
+            model.durations, model.event_observed, label=COL_EMP, weights=model.weights, entry=model.entry
+        )
+        sf, cdf = kmf.survival_function_[COL_EMP], kmf.cumulative_density_[COL_EMP]
 
-    q = np.unique(kmf.cumulative_density_.values[:, 0])
-    # this is equivalent to the old code `qth_survival_times(q, kmf.cumulative_density, cdf=True)`
-    quantiles = qth_survival_times(1 - q, kmf.survival_function_)
+    elif CensoringType.is_interval_censoring(model):
+        kmf = KaplanMeierFitter().fit_interval_censoring(
+            model.lower_bound, model.upper_bound, label=COL_EMP, weights=model.weights, entry=model.entry
+        )
+        sf, cdf = kmf.survival_function_.mean(1), kmf.cumulative_density_[COL_EMP + "_lower"]
+
+    q = np.unique(cdf.values)
+
+    quantiles = qth_survival_times(1 - q, sf)
     quantiles[COL_THEO] = dist_object.ppf(q)
     quantiles = quantiles.replace([-np.inf, 0, np.inf], np.nan).dropna()
 
@@ -317,7 +356,7 @@ def remove_ticks(ax, x=False, y=False):
     return ax
 
 
-def add_at_risk_counts(*fitters, **kwargs):
+def add_at_risk_counts(*fitters, ax=None, **kwargs):
     """
     Add counts showing how many individuals were at risk at each time point in
     survival/hazard plots.
@@ -327,7 +366,8 @@ def add_at_risk_counts(*fitters, **kwargs):
     fitters:
       One or several fitters, for example KaplanMeierFitter,
       NelsonAalenFitter, etc...
-
+    ax:
+        a matplotlib axes
 
     Returns
     --------
@@ -336,30 +376,31 @@ def add_at_risk_counts(*fitters, **kwargs):
 
     Examples
     --------
-    >>> # First train some fitters and plot them
-    >>> fig = plt.figure()
-    >>> ax = plt.subplot(111)
-    >>>
-    >>> f1 = KaplanMeierFitter()
-    >>> f1.fit(data)
-    >>> f1.plot(ax=ax)
-    >>>
-    >>> f2 = KaplanMeierFitter()
-    >>> f2.fit(data)
-    >>> f2.plot(ax=ax)
-    >>>
-    >>> # There are equivalent
-    >>> add_at_risk_counts(f1, f2)
-    >>> add_at_risk_counts(f1, f2, ax=ax, fig=fig)
-    >>>
-    >>> # This overrides the labels
-    >>> add_at_risk_counts(f1, f2, labels=['fitter one', 'fitter two'])
-    >>>
-    >>> # This hides the labels
-    >>> add_at_risk_counts(f1, f2, labels=None)
+    .. code:: python
+
+        # First train some fitters and plot them
+        fig = plt.figure()
+        ax = plt.subplot(111)
+
+        f1 = KaplanMeierFitter()
+        f1.fit(data)
+        f1.plot(ax=ax)
+
+        f2 = KaplanMeierFitter()
+        f2.fit(data)
+        f2.plot(ax=ax)
+
+        # There are equivalent
+        add_at_risk_counts(f1, f2)
+        add_at_risk_counts(f1, f2, ax=ax, fig=fig)
+
+        # This overrides the labels
+        add_at_risk_counts(f1, f2, labels=['fitter one', 'fitter two'])
+
+        # This hides the labels
+        add_at_risk_counts(f1, f2, labels=None)
     """
     # Axes and Figure can't be None
-    ax = kwargs.pop("ax", None)
     if ax is None:
         ax = plt.gca()
 
@@ -374,11 +415,15 @@ def add_at_risk_counts(*fitters, **kwargs):
         labels = kwargs.pop("labels", None)
         if labels is None:
             labels = [None] * len(fitters)
+
+    # remove xlabel
+    ax.set_xlabel("")
     # Create another axes where we can put size ticks
     ax2 = plt.twiny(ax=ax)
     # Move the ticks below existing axes
     # Appropriate length scaled for 6 inches. Adjust for figure size.
-    ax2_ypos = -0.15 * 6.0 / fig.get_figheight()
+    ax_height = (ax.get_position().y1 - ax.get_position().y0) * fig.get_figheight()  # axis height
+    ax2_ypos = -0.1 * 6.0 / ax_height
     move_spines(ax2, ["bottom"], [ax2_ypos])
     # Hide all fluff
     remove_spines(ax2, ["top", "right", "bottom", "left"])
@@ -425,6 +470,103 @@ def add_at_risk_counts(*fitters, **kwargs):
     return ax
 
 
+def plot_interval_censored_lifetimes(
+    lower_bound,
+    upper_bound,
+    entry=None,
+    left_truncated=False,
+    sort_by_lower_bound=True,
+    event_observed_color="#A60628",
+    event_right_censored_color="#348ABD",
+    ax=None,
+    **kwargs
+):
+    """
+    Returns a lifetime plot for interval censored data.
+
+    Parameters
+    -----------
+    lower_bound: (n,) numpy array or pd.Series
+      the start of the period the subject experienced the event in.
+    upper_bound: (n,) numpy array or pd.Series
+      the end of the period the subject experienced the event in. If the value is equal to the corresponding value in lower_bound, then
+      the individual's event was observed (not censored).
+    entry: (n,) numpy array or pd.Series
+      offsetting the births away from t=0. This could be from left-truncation, or delayed entry into study.
+    left_truncated: boolean
+      if entry is provided, and the data is left-truncated, this will display additional information in the plot to reflect this.
+    sort_by_lower_bound: boolean
+      sort by the lower_bound vector
+    event_observed_color: str
+      default: "#A60628"
+    event_right_censored_color: str
+      default: "#348ABD"
+      applies to any individual with an upper bound of infinity.
+
+    Returns
+    -------
+    ax:
+
+    Examples
+    ---------
+    .. code:: python
+
+        import pandas as pd
+        import numpy as np
+        from lifelines.plotting import plot_interval_censored_lifetimes
+        df = pd.DataFrame({'lb':[20,15,30, 10, 20, 30], 'ub':[25, 15, np.infty, 20, 20, np.infty]})
+        ax = plot_interval_censored_lifetimes(lower_bound=df['lb'], upper_bound=df['ub'])
+    """
+
+    if ax is None:
+        ax = plt.gca()
+
+    # If lower_bounds is pd.Series with non-default index, then use index values as y-axis labels.
+    label_plot_bars = type(lower_bound) is pd.Series and type(lower_bound.index) is not pd.RangeIndex
+
+    N = lower_bound.shape[0]
+    if N > 80:
+        warnings.warn("For less visual clutter, you may want to subsample to less than 80 individuals.")
+
+    assert upper_bound.shape[0] == N
+
+    if sort_by_lower_bound:
+        ix = np.argsort(lower_bound, 0)
+        upper_bound = _iloc(upper_bound, ix)
+        lower_bound = _iloc(lower_bound, ix)
+        if entry:
+            entry = _iloc(lower_bound, ix)
+
+    if entry is None:
+        entry = np.zeros(N)
+
+    for i in range(N):
+        if np.isposinf(_iloc(upper_bound, i)):
+            c = event_right_censored_color
+            ax.hlines(i, _iloc(entry, i), _iloc(lower_bound, i), color=c, lw=1.5)
+        else:
+            c = event_observed_color
+            ax.hlines(i, _iloc(entry, i), _iloc(upper_bound, i), color=c, lw=1.5)
+            if _iloc(lower_bound, i) == _iloc(upper_bound, i):
+                ax.scatter(_iloc(lower_bound, i), i, color=c, marker="o", s=13)
+            else:
+                ax.scatter(_iloc(lower_bound, i), i, color=c, marker=">", s=13)
+                ax.scatter(_iloc(upper_bound, i), i, color=c, marker="<", s=13)
+
+        if left_truncated:
+            ax.hlines(i, 0, _iloc(entry, i), color=c, lw=1.0, linestyle="--")
+
+    if label_plot_bars:
+        ax.set_yticks(range(0, N))
+        ax.set_yticklabels(lower_bound.index)
+    else:
+        ax.yaxis.set_major_locator(MaxNLocator(integer=True))
+
+    ax.set_xlim(0)
+    ax.set_ylim(-0.5, N)
+    return ax
+
+
 def plot_lifetimes(
     durations,
     event_observed=None,
@@ -462,14 +604,20 @@ def plot_lifetimes(
 
     Examples
     ---------
-    >>> from lifelines.datasets import load_waltons
-    >>> from lifelines.plotting import plot_lifetimes
-    >>> T, E = load_waltons()["T"], load_waltons()["E"]
-    >>> ax = plot_lifetimes(T.loc[:50], event_observed=E.loc[:50])
+    .. code:: python
+
+        from lifelines.datasets import load_waltons
+        from lifelines.plotting import plot_lifetimes
+        T, E = load_waltons()["T"], load_waltons()["E"]
+        ax = plot_lifetimes(T.loc[:50], event_observed=E.loc[:50])
 
     """
+
     if ax is None:
         ax = plt.gca()
+
+    # If durations is pd.Series with non-default index, then use index values as y-axis labels.
+    label_plot_bars = type(durations) is pd.Series and type(durations.index) is not pd.RangeIndex
 
     N = durations.shape[0]
     if N > 80:
@@ -487,18 +635,25 @@ def plot_lifetimes(
     if sort_by_duration:
         # order by length of lifetimes;
         ix = np.argsort(entry + durations, 0)
-        durations = durations[ix]
-        event_observed = event_observed[ix]
-        entry = entry[ix]
+        durations = _iloc(durations, ix)
+        event_observed = _iloc(event_observed, ix)
+        entry = _iloc(entry, ix)
 
     for i in range(N):
-        c = event_observed_color if event_observed[i] else event_censored_color
-        ax.hlines(i, entry[i], entry[i] + durations[i], color=c, lw=1.5)
+        c = event_observed_color if _iloc(event_observed, i) else event_censored_color
+        ax.hlines(i, _iloc(entry, i), _iloc(entry, i) + _iloc(durations, i), color=c, lw=1.5)
         if left_truncated:
-            ax.hlines(i, 0, entry[i], color=c, lw=1.0, linestyle="--")
-        m = "" if not event_observed[i] else "o"
-        ax.scatter(entry[i] + durations[i], i, color=c, marker=m, s=10)
+            ax.hlines(i, 0, _iloc(entry, i), color=c, lw=1.0, linestyle="--")
+        m = "" if not _iloc(event_observed, i) else "o"
+        ax.scatter(_iloc(entry, i) + _iloc(durations, i), i, color=c, marker=m, s=13)
 
+    if label_plot_bars:
+        ax.set_yticks(range(0, N))
+        ax.set_yticklabels(durations.index)
+    else:
+        ax.yaxis.set_major_locator(MaxNLocator(integer=True))
+
+    ax.set_xlim(0)
     ax.set_ylim(-0.5, N)
     return ax
 
@@ -520,9 +675,7 @@ def create_dataframe_slicer(iloc, loc, timeline):
         raise ValueError("Cannot set both loc and iloc in call to .plot().")
 
     user_did_not_specify_certain_indexes = (iloc is None) and (loc is None)
-    user_submitted_slice = (
-        slice(timeline.min(), timeline.max()) if user_did_not_specify_certain_indexes else coalesce(loc, iloc)
-    )
+    user_submitted_slice = slice(timeline.min(), timeline.max()) if user_did_not_specify_certain_indexes else coalesce(loc, iloc)
 
     get_method = "iloc" if iloc is not None else "loc"
     return lambda df: getattr(df, get_method)[user_submitted_slice]
@@ -548,7 +701,6 @@ def loglogs_plot(cls, loc=None, iloc=None, show_censors=False, censor_styles=Non
     kwargs["ax"] = ax
     set_kwargs_color(kwargs)
     set_kwargs_drawstyle(kwargs)
-    kwargs["logx"] = True
 
     dataframe_slicer = create_dataframe_slicer(iloc, loc, cls.timeline)
 
@@ -560,13 +712,15 @@ def loglogs_plot(cls, loc=None, iloc=None, show_censors=False, censor_styles=Non
         cs.update(censor_styles)
         times = dataframe_slicer(cls.event_table.loc[(cls.event_table["censored"] > 0)]).index.values.astype(float)
         v = cls.predict(times)
-        # don't log times, as Pandas will take care of all log-scaling later.
-        ax.plot(times, loglog(v), linestyle="None", color=colour, **cs)
+        ax.plot(np.log(times), loglog(v), linestyle="None", color=colour, **cs)
 
     # plot estimate
-    dataframe_slicer(loglog(cls.survival_function_)).plot(**kwargs)
+    sliced_estimates = dataframe_slicer(loglog(cls.survival_function_))
+    sliced_estimates["log(timeline)"] = np.log(sliced_estimates.index)
+    sliced_estimates.plot(x="log(timeline)", **kwargs)
     ax.set_xlabel("log(timeline)")
     ax.set_ylabel("log(-log(survival_function_))")
+
     return ax
 
 
@@ -584,12 +738,13 @@ def _plot_estimate(
     ci_alpha=0.25,
     ci_show=True,
     at_risk_counts=False,
+    logx: bool = False,
     ax=None,
     **kwargs
 ):
 
     """
-    Plots a pretty figure of {0}.{1}
+    Plots a pretty figure of estimates
 
     Matplotlib plot arguments can be passed in inside the kwargs, plus
 
@@ -626,6 +781,9 @@ def _plot_estimate(
         >>> model.plot(iloc=slice(0,10))
 
         will plot the first 10 time points.
+    logx: bool
+        Use log scaling on x axis
+
 
     Returns
     -------
@@ -639,34 +797,40 @@ def _plot_estimate(
         )
         ci_only_lines = ci_force_lines
 
-    plot_estimate_config = PlotEstimateConfig(cls, estimate, loc, iloc, show_censors, censor_styles, ax, **kwargs)
+    plot_estimate_config = PlotEstimateConfig(cls, estimate, loc, iloc, show_censors, censor_styles, logx, ax, **kwargs)
 
     dataframe_slicer = create_dataframe_slicer(iloc, loc, cls.timeline)
 
     if show_censors and cls.event_table["censored"].sum() > 0:
         cs = {"marker": "+", "ms": 12, "mew": 1}
         cs.update(plot_estimate_config.censor_styles)
-        censored_times = dataframe_slicer(cls.event_table.loc[(cls.event_table["censored"] > 0)]).index.values.astype(
-            float
-        )
+        censored_times = dataframe_slicer(cls.event_table.loc[(cls.event_table["censored"] > 0)]).index.values.astype(float)
         v = plot_estimate_config.predict_at_times(censored_times).values
         plot_estimate_config.ax.plot(censored_times, v, linestyle="None", color=plot_estimate_config.colour, **cs)
 
-    dataframe_slicer(plot_estimate_config.estimate_).rename(
-        columns=lambda _: plot_estimate_config.kwargs.pop("label")
-    ).plot(**plot_estimate_config.kwargs)
+    dataframe_slicer(plot_estimate_config.estimate_).rename(columns=lambda _: plot_estimate_config.kwargs.pop("label")).plot(
+        logx=plot_estimate_config.logx, **plot_estimate_config.kwargs
+    )
+
     # plot confidence intervals
     if ci_show:
         if ci_only_lines:
-            dataframe_slicer(plot_estimate_config.confidence_interval_).plot(
-                linestyle="-",
-                linewidth=1,
-                color=[plot_estimate_config.colour],
-                legend=ci_legend,
-                drawstyle=plot_estimate_config.kwargs["drawstyle"],
-                ax=plot_estimate_config.ax,
-                alpha=0.6,
-            )
+            # see https://github.com/CamDavidsonPilon/lifelines/issues/928
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                (
+                    dataframe_slicer(plot_estimate_config.confidence_interval_)
+                    .rename(columns=lambda s: ("" if ci_legend else "_") + s)
+                    .plot(
+                        linestyle="-",
+                        linewidth=1,
+                        color=[plot_estimate_config.colour],
+                        drawstyle=plot_estimate_config.kwargs["drawstyle"],
+                        alpha=0.6,
+                        logx=plot_estimate_config.logx,
+                        ax=plot_estimate_config.ax,
+                    )
+                )
         else:
             x = dataframe_slicer(plot_estimate_config.confidence_interval_).index.values.astype(float)
             lower = dataframe_slicer(plot_estimate_config.confidence_interval_.iloc[:, [0]]).values[:, 0]
@@ -694,7 +858,7 @@ def _plot_estimate(
 
 
 class PlotEstimateConfig:
-    def __init__(self, cls, estimate, loc, iloc, show_censors, censor_styles, ax, **kwargs):
+    def __init__(self, cls, estimate: Union[str, pd.DataFrame], loc, iloc, show_censors, censor_styles, logx, ax, **kwargs):
 
         self.censor_styles = coalesce(censor_styles, {})
 
@@ -712,6 +876,7 @@ class PlotEstimateConfig:
         # plot censors
         self.ax = ax
         self.colour = kwargs["color"]
+        self.logx = logx
         self.kwargs = kwargs
 
         if isinstance(estimate, str):

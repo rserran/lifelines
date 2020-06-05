@@ -1,32 +1,19 @@
 # -*- coding: utf-8 -*-
+from typing import Optional
 from lifelines.fitters import KnownModelParametricUnivariateFitter
-import autograd.numpy as np
+from lifelines.fitters.mixins import SplineFitterMixin
+import numpy as np
+import autograd.numpy as anp
 from lifelines.utils.safe_exp import safe_exp
-from lifelines import utils
 
 
-class SplineFitterMixin:
-    _scipy_fit_method = "SLSQP"
-    _scipy_fit_options = {"ftol": 1e-10}
-
-    @staticmethod
-    def relu(x):
-        return np.maximum(0, x)
-
-    def basis(self, x, knot, min_knot, max_knot):
-        lambda_ = (max_knot - knot) / (max_knot - min_knot)
-        return self.relu(x - knot) ** 3 - (
-            lambda_ * self.relu(x - min_knot) ** 3 + (1 - lambda_) * self.relu(x - max_knot) ** 3
-        )
-
-
-class SplineFitter(SplineFitterMixin, KnownModelParametricUnivariateFitter):
+class SplineFitter(KnownModelParametricUnivariateFitter, SplineFitterMixin):
     r"""
-    Model the cumulative hazard using cubic splines. This offers great flexibility and smoothness of the cumulative hazard.
+    Model the cumulative hazard using :math:`N` cubic splines. This offers great flexibility and smoothness of the cumulative hazard.
 
     .. math::
 
-        H(t) = \exp{\phi_0 + \phi_1\log{t} + \sum_{j=2}^N \phi_j v_j(\log{t})
+        H(t) = \exp{\left( \phi_0 + \phi_1\log{t} + \sum_{j=2}^N \phi_j v_j\(\log{t})\right)}
 
     where :math:`v_j` are our cubic basis functions at predetermined knots. See references for exact definition.
 
@@ -34,7 +21,7 @@ class SplineFitter(SplineFitterMixin, KnownModelParametricUnivariateFitter):
     -----------
     knot_locations: list, np.array
         The locations of the cubic breakpoints. Typically, the first knot is the minimum observed death, the last knot is the maximum observed death, and the knots in between
-        are the centiles of observed data (ex: if one additional knot, choose the 50th percentile, the median. If two additional knots, choose the 33th and 66th percentiles).
+        are the centiles of observed data (ex: if one additional knot, choose the 50th percentile, the median. If two additional knots, choose the 33rd and 66th percentiles).
 
     References
     ------------
@@ -43,16 +30,19 @@ class SplineFitter(SplineFitterMixin, KnownModelParametricUnivariateFitter):
 
     Examples
     --------
+    .. code:: python
 
-    >>> from lifelines import SplineFitter
-    >>> from lifelines.datasets import load_waltons
-    >>> waltons = load_waltons()
-    >>> T, E = waltons['T'], waltons['E']
-    >>> knots = np.percentile(T.loc[E.astype(bool)], [0, 50, 100])
-    >>> sf = SplineFitter(knots)
-    >>> sf.fit()
-    >>> sf.plot()
-    >>> print(sf.knots)
+        from lifelines import SplineFitter
+        from lifelines.datasets import load_waltons
+        waltons = load_waltons()
+
+        T, E = waltons['T'], waltons['E']
+        knots = np.percentile(T.loc[E.astype(bool)], [0, 50, 100])
+
+        sf = SplineFitter(knots)
+        sf.fit(T, E)
+        sf.plot()
+        print(sf.knots)
 
     Attributes
     ----------
@@ -62,8 +52,11 @@ class SplineFitter(SplineFitterMixin, KnownModelParametricUnivariateFitter):
         The estimated hazard (with custom timeline if provided)
     survival_function_ : DataFrame
         The estimated survival function (with custom timeline if provided)
-    cumumlative_density_ : DataFrame
+    cumulative_density_ : DataFrame
         The estimated cumulative density function (with custom timeline if provided)
+    density: DataFrame
+        The estimated density function (PDF) (with custom timeline if provided)
+
     variance_matrix_ : numpy array
         The variance matrix of the coefficients
     median_survival_time_: float
@@ -84,8 +77,10 @@ class SplineFitter(SplineFitterMixin, KnownModelParametricUnivariateFitter):
         The locations of the cubic breakpoints.
 
     """
+    _scipy_fit_method = "SLSQP"
+    _scipy_fit_options = {"maxiter": 1000}
 
-    def __init__(self, knot_locations: np.ndarray, *args, **kwargs):
+    def __init__(self, knot_locations: np.array, *args, **kwargs):
         self.knot_locations = knot_locations
         self.n_knots = len(self.knot_locations)
         self._fitted_parameter_names = ["phi_%d_" % i for i in range(self.n_knots)]
@@ -97,17 +92,14 @@ class SplineFitter(SplineFitterMixin, KnownModelParametricUnivariateFitter):
 
     def _cumulative_hazard(self, params, t):
         phis = params
-        lT = np.log(t)
+        lT = anp.log(t)
 
-        cum_haz = np.exp(phis[0] + phis[1] * lT)
+        cum_haz = anp.exp(phis[0] + phis[1] * lT)
         for i in range(2, self.n_knots):
-            cum_haz = cum_haz * np.exp(
+            cum_haz = cum_haz * anp.exp(
                 phis[i]
                 * self.basis(
-                    lT,
-                    np.log(self.knot_locations[i - 1]),
-                    np.log(self.knot_locations[0]),
-                    np.log(self.knot_locations[-1]),
+                    lT, anp.log(self.knot_locations[i - 1]), anp.log(self.knot_locations[0]), anp.log(self.knot_locations[-1])
                 )
             )
 

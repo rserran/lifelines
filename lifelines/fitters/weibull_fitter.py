@@ -14,7 +14,7 @@ class WeibullFitter(KnownModelParametricUnivariateFitter):
 
     .. math::  S(t) = \exp\left(-\left(\frac{t}{\lambda}\right)^\rho\right),   \lambda > 0, \rho > 0,
 
-    The :math:`\lambda` (scale) parameter has an applicable interpretation: it represent the time when 37% of the population has died.
+    The :math:`\lambda` (scale) parameter has an applicable interpretation: it represents the time when 63.2% of the population has died.
     The :math:`\rho` (shape) parameter controls if the cumulative hazard (see below) is convex or concave, representing accelerating or decelerating
     hazards.
 
@@ -44,14 +44,15 @@ class WeibullFitter(KnownModelParametricUnivariateFitter):
 
     Examples
     --------
+    .. code:: python
 
-    >>> from lifelines import WeibullFitter
-    >>> from lifelines.datasets import load_waltons
-    >>> waltons = load_waltons()
-    >>> wbf = WeibullFitter()
-    >>> wbf.fit(waltons['T'], waltons['E'])
-    >>> wbf.plot()
-    >>> print(wbf.lambda_)
+        from lifelines import WeibullFitter
+        from lifelines.datasets import load_waltons
+        waltons = load_waltons()
+        wbf = WeibullFitter()
+        wbf.fit(waltons['T'], waltons['E'])
+        wbf.plot()
+        print(wbf.lambda_)
 
     Attributes
     ----------
@@ -61,8 +62,11 @@ class WeibullFitter(KnownModelParametricUnivariateFitter):
         The estimated hazard (with custom timeline if provided)
     survival_function_ : DataFrame
         The estimated survival function (with custom timeline if provided)
-    cumumlative_density_ : DataFrame
+    cumulative_density_ : DataFrame
         The estimated cumulative density function (with custom timeline if provided)
+    density: DataFrame
+        The estimated density function (PDF) (with custom timeline if provided)
+
     variance_matrix_ : numpy array
         The variance matrix of the coefficients
     median_survival_time_: float
@@ -85,12 +89,14 @@ class WeibullFitter(KnownModelParametricUnivariateFitter):
     Looking for a 3-parameter Weibull model? See notes `here <https://lifelines.readthedocs.io/en/latest/jupyter_notebooks/Piecewise%20Exponential%20Models%20and%20Creating%20Custom%20Models.html#3-parameter-Weibull-distribution>`_.
     """
 
+    lambda_: float
+    rho_: float
     _fitted_parameter_names = ["lambda_", "rho_"]
     _compare_to_values = np.array([1.0, 1.0])
     _scipy_fit_options = {"ftol": 1e-14}
 
     def _create_initial_point(self, Ts, E, entry, weights):
-        return np.array([utils.coalesce(*Ts).std(), 1.0])
+        return np.array([utils.coalesce(*Ts).mean(), 1.0])
 
     def _cumulative_hazard(self, params, times):
         lambda_, rho_ = params

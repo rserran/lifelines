@@ -5,7 +5,7 @@ import collections
 from datetime import datetime
 from functools import wraps
 from textwrap import dedent
-from typing import Union, Any, Tuple, List, Callable, Optional
+from typing import Union, Any, Tuple, List, Callable, Optional, Dict
 
 import numpy as np
 from numpy import ndarray
@@ -41,6 +41,10 @@ class CensoringType:
     LEFT = 1
     INTERVAL = 2
     RIGHT = 3
+
+    MAP = {"right": RIGHT, "left": LEFT, "interval": INTERVAL}
+
+    HUMAN_MAP = {LEFT: "left", RIGHT: "right", INTERVAL: "interval"}
 
     @classmethod
     def right_censoring(cls, function: Callable) -> Callable:
@@ -84,11 +88,13 @@ class CensoringType:
     @classmethod
     def get_human_readable_censoring_type(cls, model) -> str:
         if cls.is_interval_censoring(model):
-            return "interval"
+            return cls.HUMAN_MAP[cls.INTERVAL]
         elif cls.is_right_censoring(model):
-            return "right"
+            return cls.HUMAN_MAP[cls.RIGHT]
+        elif cls.is_left_censoring(model):
+            return cls.HUMAN_MAP[cls.LEFT]
         else:
-            return "left"
+            return
 
 
 class StatError(Exception):
@@ -220,7 +226,9 @@ def median_survival_times(model_or_survival_function) -> float:
         raise ValueError("Can't compute median survival time of object %s" % model_or_survival_function)
 
 
-def restricted_mean_survival_time(model_or_survival_function, t: float = np.inf, return_variance=False) -> float:
+def restricted_mean_survival_time(
+    model_or_survival_function, t: float = np.inf, return_variance=False
+) -> Union[float, Tuple[float, float]]:
     r"""
     Compute the restricted mean survival time, RMST, of a survival function. This is defined as
 
@@ -239,17 +247,18 @@ def restricted_mean_survival_time(model_or_survival_function, t: float = np.inf,
 
     Example
     --------
+    .. code:: python
 
-    >>> from lifelines import KaplanMeierFitter, WeibullFitter
-    >>> from lifelines.utils import restricted_mean_survival_time
-    >>>
-    >>> kmf = KaplanMeierFitter().fit(T, E)
-    >>> restricted_mean_survival_time(kmf, t=3.5)
-    >>> restricted_mean_survival_time(kmf.survival_function_, t=3.5)
-    >>>
-    >>> wf = WeibullFitter().fit(T, E)
-    >>> restricted_mean_survival_time(wf)
-    >>> restricted_mean_survival_time(wf.survival_function_)
+        from lifelines import KaplanMeierFitter, WeibullFitter
+        from lifelines.utils import restricted_mean_survival_time
+
+        kmf = KaplanMeierFitter().fit(T, E)
+        restricted_mean_survival_time(kmf, t=3.5)
+        restricted_mean_survival_time(kmf.survival_function_, t=3.5)
+
+        wf = WeibullFitter().fit(T, E)
+        restricted_mean_survival_time(wf)
+        restricted_mean_survival_time(wf.survival_function_)
 
     References
     -------
@@ -365,34 +374,36 @@ def group_survival_table_from_events(
 
     Example
     -------
-    >>> #input
-    >>> group_survival_table_from_events(waltonG, waltonT, np.ones_like(waltonT)) #data available in test_suite.py
-    >>> #output
-    >>> [
-    >>>     array(['control', 'miR-137'], dtype=object),
-    >>>               removed:control  removed:miR-137
-    >>>     event_at
-    >>>     6                       0                1
-    >>>     7                       2                0
-    >>>     9                       0                3
-    >>>     13                      0                3
-    >>>     15                      0                2
-    >>>     ,
-    >>>               observed:control  observed:miR-137
-    >>>     event_at
-    >>>     6                        0                 1
-    >>>     7                        2                 0
-    >>>     9                        0                 3
-    >>>     13                       0                 3
-    >>>     15                       0                 2
-    >>>     ,
-    >>>               censored:control  censored:miR-137
-    >>>     event_at
-    >>>     6                        0                 0
-    >>>     7                        0                 0
-    >>>     9                        0                 0
-    >>>     ,
-    >>> ]
+    .. code:: python
+
+        #input
+        group_survival_table_from_events(waltonG, waltonT, np.ones_like(waltonT)) #data available in test_suite.py
+        #output
+        [
+            array(['control', 'miR-137'], dtype=object),
+                      removed:control  removed:miR-137
+            event_at
+            6                       0                1
+            7                       2                0
+            9                       0                3
+            13                      0                3
+            15                      0                2
+            ,
+                      observed:control  observed:miR-137
+            event_at
+            6                        0                 1
+            7                        2                 0
+            9                        0                 3
+            13                       0                 3
+            15                       0                 2
+            ,
+                      censored:control  censored:miR-137
+            event_at
+            6                        0                 0
+            7                        0                 0
+            9                        0                 0
+            ,
+        ]
 
     See Also
     --------
@@ -421,9 +432,7 @@ def group_survival_table_from_events(
         C = event_observed[ix]
         B = birth_times[ix]
         group_name = str(group)
-        columns = [
-            event_name + ":" + group_name for event_name in ["removed", "observed", "censored", "entrance", "at_risk"]
-        ]
+        columns = [event_name + ":" + group_name for event_name in ["removed", "observed", "censored", "entrance", "at_risk"]]
         if i == 0:
             survival_table = survival_table_from_events(T, C, B, columns=columns)
         else:
@@ -486,25 +495,26 @@ def survival_table_from_events(
 
     Example
     -------
+    .. code:: python
 
-    >>> #Uncollapsed output
-    >>>           removed  observed  censored  entrance   at_risk
-    >>> event_at
-    >>> 0               0         0         0        11        11
-    >>> 6               1         1         0         0        11
-    >>> 7               2         2         0         0        10
-    >>> 9               3         3         0         0         8
-    >>> 13              3         3         0         0         5
-    >>> 15              2         2         0         0         2
-    >>> #Collapsed output
-    >>>          removed observed censored at_risk
-    >>> event_at
-    >>> (0, 2]        34       33        1     312
-    >>> (2, 4]        84       42       42     278
-    >>> (4, 6]        64       17       47     194
-    >>> (6, 8]        63       16       47     130
-    >>> (8, 10]       35       12       23      67
-    >>> (10, 12]      24        5       19      32
+        #Uncollapsed output
+                  removed  observed  censored  entrance   at_risk
+        event_at
+        0               0         0         0        11        11
+        6               1         1         0         0        11
+        7               2         2         0         0        10
+        9               3         3         0         0         8
+        13              3         3         0         0         5
+        15              2         2         0         0         2
+        #Collapsed output
+                 removed observed censored at_risk
+        event_at
+        (0, 2]        34       33        1     312
+        (2, 4]        84       42       42     278
+        (4, 6]        64       17       47     194
+        (6, 8]        63       16       47     130
+        (8, 10]       35       12       23      67
+        (10, 12]      24        5       19      32
 
     See Also
     --------
@@ -593,20 +603,22 @@ def survival_events_from_table(survival_table, observed_deaths_col="observed", c
 
     Example
     -------
-    >>> # Ex: The survival table, as a pandas DataFrame:
-    >>>
-    >>>                  observed  censored
-    >>>    index
-    >>>    1                1         0
-    >>>    2                0         1
-    >>>    3                1         0
-    >>>    4                1         1
-    >>>    5                0         1
-    >>>
-    >>> # would return
-    >>> T = np.array([ 1.,  2.,  3.,  4.,  4.,  5.]),
-    >>> E = np.array([ 1.,  0.,  1.,  1.,  0.,  0.])
-    >>> W = np.array([ 1,  1,  1,  1,  1,  1])
+    .. code:: python
+
+        # Ex: The survival table, as a pandas DataFrame:
+
+                         observed  censored
+           index
+           1                1         0
+           2                0         1
+           3                1         0
+           4                1         1
+           5                0         1
+
+        # would return
+        T = np.array([ 1.,  2.,  3.,  4.,  4.,  5.]),
+        E = np.array([ 1.,  0.,  1.,  1.,  0.,  0.])
+        W = np.array([ 1,  1,  1,  1,  1,  1])
 
     See Also
     --------
@@ -630,9 +642,7 @@ def survival_events_from_table(survival_table, observed_deaths_col="observed", c
     return np.asarray(T_), np.asarray(E_), np.asarray(W_)
 
 
-def datetimes_to_durations(
-    start_times, end_times, fill_date=datetime.today(), freq="D", dayfirst=False, na_values=None
-):
+def datetimes_to_durations(start_times, end_times, fill_date=datetime.today(), freq="D", dayfirst=False, na_values=None):
     """
     This is a very flexible function for transforming arrays of start_times and end_times
     to the proper format for lifelines: duration and event observation arrays.
@@ -662,14 +672,16 @@ def datetimes_to_durations(
 
     Examples
     --------
-    >>> from lifelines.utils import datetimes_to_durations
-    >>>
-    >>> start_dates = ['2015-01-01', '2015-04-01', '2014-04-05']
-    >>> end_dates = ['2016-02-02', None, '2014-05-06']
-    >>>
-    >>> T, E = datetimes_to_durations(start_dates, end_dates, freq="D")
-    >>> T # array([ 397., 1414.,   31.])
-    >>> E # array([ True, False,  True])
+    .. code:: python
+
+        from lifelines.utils import datetimes_to_durations
+
+        start_dates = ['2015-01-01', '2015-04-01', '2014-04-05']
+        end_dates = ['2016-02-02', None, '2014-05-06']
+
+        T, E = datetimes_to_durations(start_dates, end_dates, freq="D")
+        T # array([ 397., 1414.,   31.])
+        E # array([ True, False,  True])
 
     """
     fill_date = pd.to_datetime(fill_date)
@@ -691,7 +703,7 @@ def datetimes_to_durations(
     return T, C.values
 
 
-def coalesce(*args) -> Optional[Any]:
+def coalesce(*args) -> Any:
     for arg in args:
         if arg is not None:
             return arg
@@ -703,15 +715,7 @@ def inv_normal_cdf(p) -> float:
 
 
 def k_fold_cross_validation(
-    fitters,
-    df,
-    duration_col,
-    event_col=None,
-    k=5,
-    evaluation_measure=concordance_index,
-    predictor="predict_expectation",
-    predictor_kwargs={},
-    fitter_kwargs={},
+    fitters, df, duration_col, event_col=None, k=5, scoring_method="log_likelihood", fitter_kwargs={}
 ):  # pylint: disable=dangerous-default-value,too-many-arguments,too-many-locals
     """
     Perform cross validation on a dataset. If multiple models are provided,
@@ -746,8 +750,6 @@ def k_fold_cross_validation(
       The interface for the method is: ``predict(self, data, **optional_kwargs)``
     fitter_kwargs:
       keyword args to pass into fitter.fit method.
-    predictor_kwargs:
-      keyword args to pass into predictor-method.
 
     Returns
     -------
@@ -785,19 +787,10 @@ def k_fold_cross_validation(
         training_data = df.loc[~ix]
         testing_data = df.loc[ix]
 
-        T_actual = testing_data[duration_col].values
-        E_actual = testing_data[event_col].values
-        X_testing = testing_data[testing_columns]
-
         for fitter, scores in zip(fitters, fitter_scores):
             # fit the fitter to the training data
             fitter.fit(training_data, duration_col=duration_col, event_col=event_col, **fitter_kwargs)
-            T_pred = getattr(fitter, predictor)(X_testing, **predictor_kwargs).values
-
-            try:
-                scores.append(evaluation_measure(T_actual, T_pred, E_actual))
-            except TypeError:
-                scores.append(evaluation_measure(T_actual, T_pred))
+            scores.append(fitter.score(testing_data, scoring_method=scoring_method))
 
     # If a single fitter was given as argument, return a single result
     if len(fitters) == 1:
@@ -943,10 +936,13 @@ def _get_index(X) -> List[Any]:
     # we need a unique index because these are about to become column names.
     if isinstance(X, pd.DataFrame) and X.index.is_unique:
         index = list(X.index)
+    elif isinstance(X, pd.DataFrame) and not X.index.is_unique:
+        warnings.warn("DataFrame Index is not unique, defaulting to incrementing index instead.")
+        index = list(range(X.shape[0]))
     elif isinstance(X, pd.Series):
-        return [0]
+        return list(X.index)
     else:
-        # If it's not a dataframe, order is up to user
+        # If it's not a dataframe or index is not unique, order is up to user
         index = list(range(X.shape[0]))
     return index
 
@@ -979,15 +975,28 @@ def pass_for_numeric_dtypes_or_raise_array(x):
         raise ValueError("Values must be numeric: no strings, datetimes, objects, etc.")
 
 
+def check_dimensions(df):
+    n, d = df.shape
+    if d >= n:
+        warning_text = dedent(
+            """Your dataset has more variables than samples. Even with a penalizer (which you must use), convergence is not guaranteed.
+        """
+        )
+        warnings.warn(warning_text, ConvergenceWarning)
+
+
 def check_for_numeric_dtypes_or_raise(df):
-    nonnumeric_cols = [
-        col for (col, dtype) in df.dtypes.iteritems() if dtype.name == "category" or dtype.kind not in "biuf"
-    ]
+    nonnumeric_cols = [col for (col, dtype) in df.dtypes.iteritems() if dtype.name == "category" or dtype.kind not in "biuf"]
     if len(nonnumeric_cols) > 0:  # pylint: disable=len-as-condition
         raise TypeError(
             "DataFrame contains nonnumeric columns: %s. Try 1) using pandas.get_dummies to convert the non-numeric column(s) to numerical data, 2) using it in stratification `strata=`, or 3) dropping the column(s)."
             % nonnumeric_cols
         )
+
+
+def check_for_nonnegative_intervals(start, stop):
+    if (stop < start).any():
+        raise ValueError(dedent("""There exist values in the `stop_col` column that are less than `start_col`."""))
 
 
 def check_for_immediate_deaths(events, start, stop):
@@ -1202,17 +1211,19 @@ def to_episodic_format(df, duration_col, event_col, id_col=None, time_gaps=1) ->
 
     Example
     --------
-    >>> from lifelines.datasets import load_rossi
-    >>> from lifelines.utils import to_episodic_format
-    >>> rossi = load_rossi()
-    >>> long_rossi = to_episodic_format(rossi, 'week', 'arrest', time_gaps=2.)
-    >>>
-    >>> from lifelines import CoxTimeVaryingFitter
-    >>> ctv = CoxTimeVaryingFitter()
-    >>> # age variable violates proportional hazard
-    >>> long_rossi['time * age'] = long_rossi['stop'] * long_rossi['age']
-    >>> ctv.fit(long_rossi, id_col='id', event_col='arrest', show_progress=True)
-    >>> ctv.print_summary()
+    .. code:: python
+
+        from lifelines.datasets import load_rossi
+        from lifelines.utils import to_episodic_format
+        rossi = load_rossi()
+        long_rossi = to_episodic_format(rossi, 'week', 'arrest', time_gaps=2.)
+
+        from lifelines import CoxTimeVaryingFitter
+        ctv = CoxTimeVaryingFitter()
+        # age variable violates proportional hazard
+        long_rossi['time * age'] = long_rossi['stop'] * long_rossi['age']
+        ctv.fit(long_rossi, id_col='id', event_col='arrest', show_progress=True)
+        ctv.print_summary()
 
     See Also
     --------
@@ -1436,8 +1447,9 @@ def add_covariate_to_timeline(
     if delay < 0:
         raise ValueError("delay parameter must be equal to or greater than 0")
 
-    if any(col not in long_form_df for col in (id_col, event_col, start_col, stop_col)):
-        raise IndexError("Missing column in long_form_df")
+    missing_cols = [col for col in (id_col, event_col, start_col, stop_col) if col not in long_form_df]
+    if missing_cols:
+        raise IndexError("Missing column(s) %s in long_form_df" % missing_cols)
 
     cv[duration_col] += delay
     cv = cv.dropna()
@@ -1478,9 +1490,10 @@ def covariates_from_event_matrix(df, id_col) -> pd.DataFrame:
 
     Example
     -------
+    .. code:: python
 
-    >>> cv = covariates_from_event_matrix(duration_df, 'id')
-    >>> long_form_df = add_covariate_to_timeline(long_form_df, cv, 'id', 'duration', 'e', cumulative_sum=True)
+        cv = covariates_from_event_matrix(duration_df, 'id')
+        long_form_df = add_covariate_to_timeline(long_form_df, cv, 'id', 'duration', 'e', cumulative_sum=True)
 
     """
     df = df.set_index(id_col)
@@ -1514,7 +1527,7 @@ class StepSizer:
         self.initial_step_size = initial_step_size
         self.step_size = initial_step_size
         self.temper_back_up = False
-        self.norm_of_deltas = []
+        self.norm_of_deltas: List[float] = []
 
     def update(self, norm_of_delta: float) -> "StepSizer":
         SCALE = 1.2
@@ -1535,9 +1548,7 @@ class StepSizer:
             self.temper_back_up = True
 
         # recent non-monotonically decreasing is a concern
-        if len(self.norm_of_deltas) >= LOOKBACK and not self._is_monotonically_decreasing(
-            self.norm_of_deltas[-LOOKBACK:]
-        ):
+        if len(self.norm_of_deltas) >= LOOKBACK and not self._is_monotonically_decreasing(self.norm_of_deltas[-LOOKBACK:]):
             self.step_size *= 0.98
 
         # recent monotonically decreasing is good though
@@ -1554,7 +1565,7 @@ class StepSizer:
         return self.step_size
 
 
-def _to_1d_array(x):
+def _to_1d_array(x) -> np.array:
     v = np.atleast_1d(x)
     try:
         if v.shape[0] > 1 and v.shape[1] > 1:
@@ -1586,9 +1597,7 @@ def format_exp_floats(decimals) -> Callable:
     sometimes the exp. column can be too large
     """
     threshold = 10 ** 5
-    return (
-        lambda n: "{:.{prec}e}".format(n, prec=decimals) if n > threshold else "{:4.{prec}f}".format(n, prec=decimals)
-    )
+    return lambda n: "{:.{prec}e}".format(n, prec=decimals) if n > threshold else "{:4.{prec}f}".format(n, prec=decimals)
 
 
 def format_floats(decimals) -> Callable:
@@ -1647,7 +1656,7 @@ def safe_zip(first, second):
 
 
 class DataframeSliceDict:
-    def __init__(self, df, mappings):
+    def __init__(self, df: pd.DataFrame, mappings: Dict[str, List[str]]):
         self.df = df
         self.mappings = mappings
         self.size = sum(len(v) for v in self.mappings.values())
@@ -1672,7 +1681,19 @@ class DataframeSliceDict:
             yield DataframeSliceDict(x.to_frame().T, self.mappings)
 
 
-def find_best_parametric_model(event_times, event_observed=None, evaluation: str = "AIC", additional_models=None):
+def find_best_parametric_model(
+    event_times,
+    event_observed=None,
+    scoring_method: str = "AIC",
+    additional_models=None,
+    censoring_type="right",
+    timeline=None,
+    alpha=None,
+    ci_labels=None,
+    entry=None,
+    weights=None,
+    show_progress=False,
+):
     """
     To quickly determine the best¹ univariate model, this function will iterate through each
     parametric model available in lifelines and select the one that minimizes a particular measure of fit.
@@ -1681,15 +1702,28 @@ def find_best_parametric_model(event_times, event_observed=None, evaluation: str
 
     Parameters
     -------------
-    event_times: list, np.ndarray, pd.Series
-        a (n,) array of observed survival times.
-    event_observed: list, np.ndarray, pd.Series
+    event_times: list, np.array, pd.Series
+        a (n,) array of observed survival times. If interval censoring, a tuple of (lower_bound, upper_bound).
+    event_observed: list, np.array, pd.Series
         a (n,) array of censored flags, 1 if observed,  0 if not. Default None assumes all observed.
-    evaluation: string
+    scoring_method: string
         one of {"AIC", "BIC"}
-
     additional_models: list
         list of other parametric models that implement the lifelines API.
+    censoring_type: str
+        {"right", "left", "interval"}
+    timeline: list, optional
+        return the model at the values in timeline (positively increasing)
+    alpha: float, optional
+        the alpha value in the confidence intervals. Overrides the initializing
+       alpha for this call to fit only.
+    ci_labels: list, optional
+        add custom column names to the generated confidence intervals as a length-2 list: [<lower-bound name>, <upper-bound name>]. Default: <label>_lower_<alpha>
+    entry: an array, or pd.Series, of length n
+        relative time when a subject entered the study. This is useful for left-truncated (not left-censored) observations. If None, all members of the population
+        entered study when they were "born": time zero.
+    weights: an array, or pd.Series, of length n
+        integer weights per observation
 
     Returns
     ----------
@@ -1709,20 +1743,37 @@ def find_best_parametric_model(event_times, event_observed=None, evaluation: str
     if additional_models is None:
         additional_models = []
 
+    censoring_type = CensoringType.MAP[censoring_type]
+
     evaluation_lookup = {
         "AIC": lambda model: 2 * len(model._fitted_parameter_names) - 2 * model.log_likelihood_,
-        "BIC": lambda model: 2 * len(model._fitted_parameter_names) - 2 * model.log_likelihood_ * np.log(T.shape[0]),
+        "BIC": lambda model: 2 * len(model._fitted_parameter_names)
+        - 2 * model.log_likelihood_ * np.log(model.event_observed.shape[0]),
     }
 
-    eval = evaluation_lookup[evaluation]
+    eval = evaluation_lookup[scoring_method]
+
+    if censoring_type != CensoringType.INTERVAL:
+        event_times = (event_times,)
+
+    n = event_times[0].shape
 
     if event_observed is None:
-        event_observed = np.ones_like(event_times, dtype=bool)
+        if censoring_type == CensoringType.INTERVAL:
+            event_observed = event_times[0] == event_times[1]
+        else:
+            event_observed = np.ones(n, dtype=bool)
 
-    observed_T = event_times[event_observed.astype(bool)]
-    knots1 = np.percentile(observed_T, 100 * np.linspace(0.05, 0.95, 3))
-    knots2 = np.percentile(observed_T, 100 * np.linspace(0.05, 0.95, 4))
-    knots3 = np.percentile(observed_T, 100 * np.linspace(0.05, 0.95, 5))
+    try:
+        observed_T = event_times[0][event_observed.astype(bool)]
+        knots1 = np.percentile(observed_T, 100 * np.linspace(0.05, 0.95, 3))
+        knots2 = np.percentile(observed_T, 100 * np.linspace(0.05, 0.95, 4))
+        knots3 = np.percentile(observed_T, 100 * np.linspace(0.05, 0.95, 5))
+    except:
+        observed_T = event_times[0]
+        knots1 = np.percentile(observed_T, 100 * np.linspace(0.05, 0.95, 3))
+        knots2 = np.percentile(observed_T, 100 * np.linspace(0.05, 0.95, 4))
+        knots3 = np.percentile(observed_T, 100 * np.linspace(0.05, 0.95, 5))
 
     best_model = None
     best_score = np.inf
@@ -1743,9 +1794,19 @@ def find_best_parametric_model(event_times, event_observed=None, evaluation: str
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
-                model.fit(event_times, event_observed)
+                getattr(model, "fit_" + CensoringType.HUMAN_MAP[censoring_type] + "_censoring")(
+                    *event_times,
+                    event_observed=event_observed,
+                    weights=weights,
+                    entry=entry,
+                    alpha=alpha,
+                    ci_labels=ci_labels,
+                    timeline=timeline
+                )
             score_ = eval(model)
 
+            if show_progress:
+                print(model._label, ", Score: %.2f" % score_)
             if score_ < best_score:
                 best_score = score_
                 best_model = model

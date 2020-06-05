@@ -1,6 +1,4 @@
 # -*- coding: utf-8 -*-
-
-
 import warnings
 from datetime import datetime
 import time
@@ -10,7 +8,7 @@ import pandas as pd
 from numpy.linalg import LinAlgError
 from scipy.integrate import trapz
 
-from lifelines.fitters import BaseFitter
+from lifelines.fitters import RegressionFitter
 from lifelines.utils.printer import Printer
 from lifelines.utils import (
     _get_index,
@@ -34,7 +32,7 @@ from lifelines.utils import (
 )
 
 
-class AalenAdditiveFitter(BaseFitter):
+class AalenAdditiveFitter(RegressionFitter):
 
     r"""
     This class fits the regression model:
@@ -137,19 +135,21 @@ class AalenAdditiveFitter(BaseFitter):
 
         Examples
         --------
-        >>> from lifelines import AalenAdditiveFitter
-        >>>
-        >>> df = pd.DataFrame({
-        >>>     'T': [5, 3, 9, 8, 7, 4, 4, 3, 2, 5, 6, 7],
-        >>>     'E': [1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 0],
-        >>>     'var': [0, 0, 0, 0, 1, 1, 1, 1, 1, 2, 2, 2],
-        >>>     'age': [4, 3, 9, 8, 7, 4, 4, 3, 2, 5, 6, 7],
-        >>> })
-        >>>
-        >>> aaf = AalenAdditiveFitter()
-        >>> aaf.fit(df, 'T', 'E')
-        >>> aaf.predict_median(df)
-        >>> aaf.print_summary()
+        .. code:: python
+
+            from lifelines import AalenAdditiveFitter
+
+            df = pd.DataFrame({
+                'T': [5, 3, 9, 8, 7, 4, 4, 3, 2, 5, 6, 7],
+                'E': [1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 0],
+                'var': [0, 0, 0, 0, 1, 1, 1, 1, 1, 2, 2, 2],
+                'age': [4, 3, 9, 8, 7, 4, 4, 3, 2, 5, 6, 7],
+            })
+
+            aaf = AalenAdditiveFitter()
+            aaf.fit(df, 'T', 'E')
+            aaf.predict_median(df)
+            aaf.print_summary()
 
         """
         self._time_fit_was_called = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S") + " UTC"
@@ -201,9 +201,7 @@ class AalenAdditiveFitter(BaseFitter):
 
         hazards = pd.DataFrame(hazards_, columns=columns, index=index).iloc[:stop]
         cumulative_hazards_ = hazards.cumsum()
-        cumulative_variance_hazards_ = (
-            pd.DataFrame(variance_hazards_, columns=columns, index=index).iloc[:stop].cumsum()
-        )
+        cumulative_variance_hazards_ = pd.DataFrame(variance_hazards_, columns=columns, index=index).iloc[:stop].cumsum()
 
         return hazards, cumulative_hazards_, cumulative_variance_hazards_
 
@@ -299,9 +297,7 @@ It's important to know that the naive variance estimates of the coefficients are
         self._check_values(df, T, E)
 
         if self.fit_intercept:
-            assert (
-                "_intercept" not in df.columns
-            ), "_intercept is an internal lifelines column, please rename your column first."
+            assert "_intercept" not in df.columns, "_intercept is an internal lifelines column, please rename your column first."
             X["_intercept"] = 1.0
 
         return X, T, E, W
@@ -333,9 +329,7 @@ It's important to know that the naive variance estimates of the coefficients are
         X_ = X_ if not self.fit_intercept else np.c_[X_, np.ones((n, 1))]
 
         timeline = self._index
-        individual_cumulative_hazards_ = pd.DataFrame(
-            np.dot(self.cumulative_hazards_, X_.T), index=timeline, columns=cols
-        )
+        individual_cumulative_hazards_ = pd.DataFrame(np.dot(self.cumulative_hazards_, X_.T), index=timeline, columns=cols)
 
         return individual_cumulative_hazards_
 
@@ -360,7 +354,7 @@ It's important to know that the naive variance estimates of the coefficients are
         """
         return np.exp(-self.predict_cumulative_hazard(X))
 
-    def predict_percentile(self, X, p=0.5):
+    def predict_percentile(self, X, p=0.5) -> pd.Series:
         """
         Returns the median lifetimes for the individuals.
         http://stats.stackexchange.com/questions/102986/percentile-loss-functions
@@ -376,9 +370,9 @@ It's important to know that the naive variance estimates of the coefficients are
 
         """
         index = _get_index(X)
-        return qth_survival_times(p, self.predict_survival_function(X)[index]).T
+        return qth_survival_times(p, self.predict_survival_function(X)[index]).T.squeeze()
 
-    def predict_median(self, X):
+    def predict_median(self, X) -> pd.Series:
         """
 
         Parameters
@@ -392,7 +386,7 @@ It's important to know that the naive variance estimates of the coefficients are
         """
         return self.predict_percentile(X, 0.5)
 
-    def predict_expectation(self, X):
+    def predict_expectation(self, X) -> pd.Series:
         """
         Compute the expected lifetime, E[T], using covariates X.
 
@@ -407,7 +401,7 @@ It's important to know that the naive variance estimates of the coefficients are
         """
         index = _get_index(X)
         t = self._index
-        return pd.DataFrame(trapz(self.predict_survival_function(X)[index].values.T, t), index=index)
+        return pd.Series(trapz(self.predict_survival_function(X)[index].values.T, t), index=index)
 
     def _compute_confidence_intervals(self):
         ci = 100 * (1 - self.alpha)
@@ -490,7 +484,7 @@ It's important to know that the naive variance estimates of the coefficients are
         )
 
     @property
-    def score_(self):
+    def concordance_index_(self):
         """
         The concordance score (also known as the c-index) of the fit.  The c-index is a generalization of the ROC AUC
         to survival data, including censorships.
@@ -572,6 +566,30 @@ It's important to know that the naive variance estimates of the coefficients are
             ]
         )
 
-        p = Printer(headers, self, justify, decimals, kwargs)
+        footers = [("Concordance", "{:.{prec}f}".format(self.concordance_index_, prec=decimals))]
+        p = Printer(self, headers, footers, justify, decimals, kwargs)
 
         p.print(style=style)
+
+    def score(self, df: pd.DataFrame, scoring_method: str = "log_likelihood") -> float:
+        """
+        Score the data in df on the fitted model. With default scoring method, returns
+        the *average partial log-likelihood*.
+
+        Parameters
+        ----------
+        df: DataFrame
+            the dataframe with duration col, event col, etc.
+        scoring_method: str
+            one of {'log_likelihood', 'concordance_index'}
+            log_likelihood: returns the average unpenalized partial log-likelihood.
+            concordance_index: returns the concordance-index
+        """
+        if scoring_method == "log_likelihood":
+            raise NotImplementedError("Only concordance_index is available")
+
+        T = df.pop(self.duration_col).astype(float)
+        E = df.pop(self.event_col).astype(bool)
+
+        predictions = self.predict_median(df)
+        return concordance_index(T, predictions, event_observed=E)

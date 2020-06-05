@@ -8,6 +8,7 @@ from lifelines.fitters import ParametricRegressionFitter
 from lifelines.utils import CensoringType
 from lifelines.utils.safe_exp import safe_exp
 from lifelines import utils
+from lifelines import GeneralizedGammaFitter
 
 
 class GeneralizedGammaRegressionFitter(ParametricRegressionFitter):
@@ -57,18 +58,23 @@ class GeneralizedGammaRegressionFitter(ParametricRegressionFitter):
     -----------
     alpha: float, optional (default=0.05)
         the level in the confidence intervals.
-
+    penalizer: float or array, optional (default=0.0)
+        the penalizer coefficient to the size of the coefficients. See `l1_ratio`. Must be equal to or greater than 0.
+        Alternatively, penalizer is an array equal in size to the number of parameters, with penalty coefficients for specific variables. For
+        example, `penalizer=0.01 * np.ones(p)` is the same as `penalizer=0.01`
 
     Examples
     --------
+    .. code:: python
 
-    >>> from lifelines import GeneralizedGammaFitter
-    >>> from lifelines.datasets import load_waltons
-    >>> waltons = load_waltons()
-    >>> ggf = GeneralizedGammaFitter()
-    >>> ggf.fit(waltons['T'], waltons['E'])
-    >>> ggf.plot()
-    >>> ggf.summary
+        from lifelines import GeneralizedGammaFitter
+        from lifelines.datasets import load_waltons
+        waltons = load_waltons()
+
+        ggf = GeneralizedGammaFitter()
+        ggf.fit(waltons['T'], waltons['E'])
+        ggf.plot()
+        ggf.summary
 
     Attributes
     ----------
@@ -78,8 +84,11 @@ class GeneralizedGammaRegressionFitter(ParametricRegressionFitter):
         The estimated hazard (with custom timeline if provided)
     survival_function_ : DataFrame
         The estimated survival function (with custom timeline if provided)
-    cumumlative_density_ : DataFrame
+    cumulative_density_ : DataFrame
         The estimated cumulative density function (with custom timeline if provided)
+    density: DataFrame
+        The estimated density function (PDF) (with custom timeline if provided)
+
     variance_matrix_ : numpy array
         The variance matrix of the coefficients
     median_: float
@@ -100,16 +109,12 @@ class GeneralizedGammaRegressionFitter(ParametricRegressionFitter):
         The entry array provided, or None
     """
     _fitted_parameter_names = ["sigma_", "mu_", "lambda_"]
-    _scipy_fit_method = "SLSQP"
-    _scipy_fit_options = {"ftol": 1e-6, "maxiter": 200}
 
     def _create_initial_point(self, Ts, E, entries, weights, Xs):
         # detect constant columns
         constant_col = (Xs.df.var(0) < 1e-8).idxmax()
 
-        import lifelines
-
-        uni_model = lifelines.GeneralizedGammaFitter()
+        uni_model = GeneralizedGammaFitter()
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
@@ -117,38 +122,39 @@ class GeneralizedGammaRegressionFitter(ParametricRegressionFitter):
             if utils.CensoringType.is_right_censoring(self):
                 uni_model.fit_right_censoring(Ts[0], event_observed=E, entry=entries, weights=weights)
             elif utils.CensoringType.is_interval_censoring(self):
-                uni_model.fit_interval_censoring(Ts[0], Ts[1], event_observed=E, entry=entries, weights=weights)
+                uni_model.fit_interval_censoring(Ts[0], Ts[1], entry=entries, weights=weights)
             elif utils.CensoringType.is_left_censoring(self):
                 uni_model.fit_left_censoring(Ts[1], event_observed=E, entry=entries, weights=weights)
 
             # we may use this later in print_summary
             self._ll_null_ = uni_model.log_likelihood_
 
-            d = {}
+            default_point = super(GeneralizedGammaRegressionFitter, self)._create_initial_point(Ts, E, entries, weights, Xs)
+            nested_point = {}
 
-            d["mu_"] = np.array([0.0] * (len(Xs.mappings["mu_"])))
+            nested_point["mu_"] = np.array([0.0] * (len(Xs.mappings["mu_"])))
             if constant_col in Xs.mappings["mu_"]:
-                d["mu_"][Xs.mappings["mu_"].index(constant_col)] = uni_model.mu_
+                nested_point["mu_"][Xs.mappings["mu_"].index(constant_col)] = uni_model.mu_
 
-            d["sigma_"] = np.array([0.0] * (len(Xs.mappings["sigma_"])))
+            nested_point["sigma_"] = np.array([0.0] * (len(Xs.mappings["sigma_"])))
             if constant_col in Xs.mappings["mu_"]:
-                d["sigma_"][Xs.mappings["sigma_"].index(constant_col)] = uni_model.ln_sigma_
+                nested_point["sigma_"][Xs.mappings["sigma_"].index(constant_col)] = uni_model.ln_sigma_
 
             # this needs to be non-zero because we divide by it
-            d["lambda_"] = np.array([0.01] * (len(Xs.mappings["lambda_"])))
+            nested_point["lambda_"] = np.array([0.01] * (len(Xs.mappings["lambda_"])))
             if constant_col in Xs.mappings["lambda_"]:
-                d["lambda_"][Xs.mappings["lambda_"].index(constant_col)] = uni_model.lambda_
+                nested_point["lambda_"][Xs.mappings["lambda_"].index(constant_col)] = uni_model.lambda_
 
-            return d
+            return [nested_point, default_point]
 
     def _survival_function(self, params, T, Xs):
-        lambda_ = np.clip(Xs["lambda_"] @ params["lambda_"], 1e-25, 1e10)
+        lambda_ = Xs["lambda_"] @ params["lambda_"]
         sigma_ = safe_exp(Xs["sigma_"] @ params["sigma_"])
         mu_ = Xs["mu_"] @ params["mu_"]
 
         Z = (log(T) - mu_) / sigma_
         ilambda_2 = 1 / lambda_ ** 2
-        exp_term = safe_exp(lambda_ * Z - 2 * log(np.abs(lambda_)))
+        exp_term = np.clip(safe_exp(lambda_ * Z) * ilambda_2, 1e-25, 1e25)
 
         return np.where(lambda_ > 0, gammaincc(ilambda_2, exp_term), gammainc(ilambda_2, exp_term))
 
@@ -159,7 +165,7 @@ class GeneralizedGammaRegressionFitter(ParametricRegressionFitter):
 
         ilambda_2 = 1 / lambda_ ** 2
         Z = (log(T) - mu_) / np.clip(sigma_, 1e-10, 1e20)
-        exp_term = np.clip(safe_exp(lambda_ * Z - 2 * log(np.abs(lambda_))), 1e-300, np.inf)
+        exp_term = np.clip(safe_exp(lambda_ * Z) * ilambda_2, 1e-25, 1e25)
 
         return -np.where(lambda_ > 0, gammainccln(ilambda_2, exp_term), gammaincln(ilambda_2, exp_term))
 
@@ -170,7 +176,7 @@ class GeneralizedGammaRegressionFitter(ParametricRegressionFitter):
 
         ilambda_2 = 1 / lambda_ ** 2
         Z = (log(T) - mu_) / np.clip(safe_exp(ln_sigma_), 1e-10, 1e20)
-        exp_term = np.clip(safe_exp(lambda_ * Z - 2 * log(np.abs(lambda_))), 1e-300, np.inf)
+        exp_term = np.clip(safe_exp(lambda_ * Z) * ilambda_2, 1e-25, 1e25)
 
         return (
             log(np.abs(lambda_))

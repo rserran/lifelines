@@ -17,8 +17,11 @@ from lifelines.utils import (
     StatisticalWarning,
     coalesce,
     CensoringType,
+    pass_for_numeric_dtypes_or_raise_array,
+    check_nans_or_infs,
 )
 from lifelines.plotting import loglogs_plot, _plot_estimate
+from lifelines.fitters.npmle import npmle, reconstruct_survival_function, npmle_compute_confidence_intervals
 
 
 class KaplanMeierFitter(UnivariateFitter):
@@ -35,12 +38,15 @@ class KaplanMeierFitter(UnivariateFitter):
 
     Examples
     --------
-    >>> from lifelines import KaplanMeierFitter
-    >>> from lifelines.datasets import load_waltons
-    >>> waltons = load_waltons()
-    >>> kmf = KaplanMeierFitter(label="waltons_data")
-    >>> kmf.fit(waltons['T'], waltons['E'])
-    >>> kmf.plot()
+    .. code:: python
+
+        from lifelines import KaplanMeierFitter
+        from lifelines.datasets import load_waltons
+        waltons = load_waltons()
+
+        kmf = KaplanMeierFitter(label="waltons_data")
+        kmf.fit(waltons['T'], waltons['E'])
+        kmf.plot()
 
 
     Attributes
@@ -55,7 +61,7 @@ class KaplanMeierFitter(UnivariateFitter):
     confidence_interval_survival_function_ : DataFrame
         The lower and upper confidence intervals for the survival function. An alias of
         ``confidence_interval_``. Uses Greenwood's Exponential formula ("log-log" in R).
-    cumumlative_density_ : DataFrame
+    cumulative_density_ : DataFrame
         The estimated cumulative density function (with custom timeline if provided)
     confidence_interval_cumulative_density_ : DataFrame
         The lower and upper confidence intervals for the cumulative density.
@@ -73,15 +79,7 @@ class KaplanMeierFitter(UnivariateFitter):
 
     @CensoringType.right_censoring
     def fit(
-        self,
-        durations,
-        event_observed=None,
-        timeline=None,
-        entry=None,
-        label=None,
-        alpha=None,
-        ci_labels=None,
-        weights=None,
+        self, durations, event_observed=None, timeline=None, entry=None, label=None, alpha=None, ci_labels=None, weights=None
     ):  # pylint: disable=too-many-arguments,too-many-locals
         """
         Fit the model to a right-censored dataset
@@ -117,17 +115,115 @@ class KaplanMeierFitter(UnivariateFitter):
 
         return self._fit(durations, event_observed, timeline, entry, label, alpha, ci_labels, weights)
 
-    @CensoringType.left_censoring
-    def fit_left_censoring(
+    @CensoringType.interval_censoring
+    def fit_interval_censoring(
         self,
-        durations,
+        lower_bound,
+        upper_bound,
         event_observed=None,
         timeline=None,
-        entry=None,
         label=None,
         alpha=None,
         ci_labels=None,
+        show_progress=False,
+        entry=None,
         weights=None,
+        tol=1e-7,
+    ) -> "KaplanMeierFitter":
+        """
+        Fit the model to a interval-censored dataset using non-parametric MLE. This estimator is
+        also called the Turnbull Estimator.
+
+        Currently, only closed interval are supported. However, it's easy to create open intervals by adding (or subtracting) a very small
+        value from the lower-bound (or upper bound). For example, the following turns closed intervals into open intervals.
+
+        >>> left, right = df['left'], df['right']
+        >>> KaplanMeierFitter().fit_interval_censoring(left + 0.00001, right - 0.00001)
+
+        Note
+        ------
+        This is new and experimental, and many features are missing.
+
+        Parameters
+        ----------
+          lower_bound: an array, list, pd.DataFrame or pd.Series
+            length n -- lower bound of observations
+          upper_bound: an array, list, pd.DataFrame or pd.Series
+            length n -- upper bound of observations
+          event_observed: an array, list, pd.DataFrame, or pd.Series, optional
+             True if the the death was observed, False if the event was lost (right-censored). This can be computed from
+             the lower_bound and upper_bound, and can be left blank.
+          timeline: an array, list, pd.DataFrame, or pd.Series, optional
+            return the best estimate at the values in timelines (positively increasing)
+          entry: an array, list, pd.DataFrame, or pd.Series, optional
+             relative time when a subject entered the study. This is useful for left-truncated (not left-censored) observations. If None, all members of the population
+             entered study when they were "born".
+          label: string, optional
+            a string to name the column of the estimate.
+          alpha: float, optional
+            the alpha value in the confidence intervals. Overrides the initializing alpha for this call to fit only.
+          ci_labels: tuple, optional
+                add custom column names to the generated confidence intervals as a length-2 list: [<lower-bound name>, <upper-bound name>]. Default: <label>_lower_<1-alpha/2>
+          weights: an array, list, pd.DataFrame, or pd.Series, optional
+              if providing a weighted dataset. For example, instead
+              of providing every subject as a single element of `durations` and `event_observed`, one could
+              weigh subject differently.
+
+        Returns
+        -------
+        self: KaplanMeierFitter
+          self with new properties like ``survival_function_``, ``plot()``, ``median_survival_time_``
+        """
+        if entry is not None:
+            raise NotImplementedError("entry is not supported yet")
+
+        if weights is None:
+            weights = np.ones_like(upper_bound)
+
+        self.weights = np.asarray(weights)
+
+        self.upper_bound = np.atleast_1d(pass_for_numeric_dtypes_or_raise_array(upper_bound))
+        self.lower_bound = np.atleast_1d(pass_for_numeric_dtypes_or_raise_array(lower_bound))
+        check_nans_or_infs(self.lower_bound)
+
+        self.event_observed = self.lower_bound == self.upper_bound
+
+        self.timeline = coalesce(timeline, np.unique(np.concatenate((self.upper_bound, self.lower_bound))))
+
+        if (self.upper_bound < self.lower_bound).any():
+            raise ValueError("All upper_bound times must be greater than or equal to lower_bound times.")
+
+        if event_observed is None:
+            event_observed = self.upper_bound == self.lower_bound
+
+        if ((self.lower_bound == self.upper_bound) != event_observed).any():
+            raise ValueError(
+                "For all rows, lower_bound == upper_bound if and only if event observed = 1 (uncensored). Likewise, lower_bound < upper_bound if and only if event observed = 0 (censored)"
+            )
+
+        self._label = coalesce(label, self._label, "NPMLE_estimate")
+
+        results = npmle(self.lower_bound, self.upper_bound, verbose=show_progress)
+        self.survival_function_ = reconstruct_survival_function(*results, self.timeline, label=self._label).loc[self.timeline]
+        self.cumulative_density_ = 1 - self.survival_function_
+
+        self._median = median_survival_times(self.survival_function_)
+        self.percentile = functools.partial(qth_survival_time, model_or_survival_function=self.survival_function_)
+
+        """
+        self.confidence_interval_ = npmle_compute_confidence_intervals(self.lower_bound, self.upper_bound, self.survival_function_, self.alpha)
+        self.confidence_interval_survival_function_ = self.confidence_interval_
+        self.confidence_interval_cumulative_density_ = 1 - self.confidence_interval_
+        """
+        # estimation methods
+        self._estimation_method = "survival_function_"
+        self._estimate_name = "survival_function_"
+        self._update_docstrings()
+        return self
+
+    @CensoringType.left_censoring
+    def fit_left_censoring(
+        self, durations, event_observed=None, timeline=None, entry=None, label=None, alpha=None, ci_labels=None, weights=None
     ):
         """
         Fit the model to a left-censored dataset
@@ -160,18 +256,11 @@ class KaplanMeierFitter(UnivariateFitter):
           self with new properties like ``survival_function_``, ``plot()``, ``median_survival_time_``
 
         """
+        # left censoring is then defined in CensoringType.is_left_censoring(self)
         return self._fit(durations, event_observed, timeline, entry, label, alpha, ci_labels, weights)
 
     def _fit(
-        self,
-        durations,
-        event_observed=None,
-        timeline=None,
-        entry=None,
-        label=None,
-        alpha=None,
-        ci_labels=None,
-        weights=None,
+        self, durations, event_observed=None, timeline=None, entry=None, label=None, alpha=None, ci_labels=None, weights=None
     ):  # pylint: disable=too-many-arguments,too-many-locals
         """
         Parameters
@@ -227,14 +316,9 @@ class KaplanMeierFitter(UnivariateFitter):
         primary_estimate_name = "survival_function_" if not is_left_censoring else "cumulative_density_"
         secondary_estimate_name = "cumulative_density_" if not is_left_censoring else "survival_function_"
 
-        (
-            self.durations,
-            self.event_observed,
-            self.timeline,
-            self.entry,
-            self.event_table,
-            self.weights,
-        ) = _preprocess_inputs(durations, event_observed, timeline, entry, weights)
+        (self.durations, self.event_observed, self.timeline, self.entry, self.event_table, self.weights) = _preprocess_inputs(
+            durations, event_observed, timeline, entry, weights
+        )
 
         alpha = alpha if alpha else self.alpha
         log_estimate, cumulative_sq_ = _additive_estimate(
@@ -283,7 +367,7 @@ class KaplanMeierFitter(UnivariateFitter):
 
     def plot_loglogs(self, *args, **kwargs):
         r"""
-        Plot :math:`\log(S(t))` against :math:`\log(t)`. Same arguments as ``.plot``.
+        Plot :math:`\log(-\log(S(t)))` against :math:`\log(t)`. Same arguments as ``.plot``.
         """
         return loglogs_plot(self, *args, **kwargs)
 
@@ -319,9 +403,17 @@ class KaplanMeierFitter(UnivariateFitter):
         label = coalesce(label, self._label)
         return pd.Series(1 - self.predict(times), index=_to_1d_array(times), name=label)
 
+    def plot(self, **kwargs):
+        return self.plot_survival_function(**kwargs)
+
     def plot_survival_function(self, **kwargs):
         """Alias of ``plot``"""
-        return _plot_estimate(self, estimate="survival_function_", **kwargs)
+        if not CensoringType.is_interval_censoring(self):
+            return _plot_estimate(self, estimate="survival_function_", **kwargs)
+        else:
+            # hack for now.
+            color = coalesce(kwargs.get("c"), kwargs.get("color"), "k")
+            self.survival_function_.plot(drawstyle="steps-pre", color=color, **kwargs)
 
     def plot_cumulative_density(self, **kwargs):
         """
@@ -363,12 +455,12 @@ class KaplanMeierFitter(UnivariateFitter):
         ax:
             a pyplot axis object
         """
-        return _plot_estimate(
-            self,
-            estimate=self.cumulative_density_,
-            confidence_intervals=self.confidence_interval_cumulative_density_,
-            **kwargs
-        )
+        if not CensoringType.is_interval_censoring(self):
+            return _plot_estimate(self, estimate="cumulative_density_", **kwargs)
+        else:
+            # hack for now.
+            color = coalesce(kwargs.get("c"), kwargs.get("color"), "k")
+            self.cumulative_density_.plot(drawstyle="steps", color=color, **kwargs)
 
     def _bounds(self, cumulative_sq_, alpha, ci_labels):
         # This method calculates confidence intervals using the exponential Greenwood formula.

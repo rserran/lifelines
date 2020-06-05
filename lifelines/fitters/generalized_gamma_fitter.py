@@ -6,6 +6,7 @@ from autograd_gamma import gammaincc, gammainc, gammaln, gammainccln, gammaincln
 from lifelines.fitters import KnownModelParametricUnivariateFitter
 from lifelines.utils import CensoringType
 from lifelines.utils.safe_exp import safe_exp
+from autograd.scipy.stats import norm
 
 
 class GeneralizedGammaFitter(KnownModelParametricUnivariateFitter):
@@ -59,14 +60,16 @@ class GeneralizedGammaFitter(KnownModelParametricUnivariateFitter):
 
     Examples
     --------
+    .. code:: python
 
-    >>> from lifelines import GeneralizedGammaFitter
-    >>> from lifelines.datasets import load_waltons
-    >>> waltons = load_waltons()
-    >>> ggf = GeneralizedGammaFitter()
-    >>> ggf.fit(waltons['T'], waltons['E'])
-    >>> ggf.plot()
-    >>> ggf.summary
+        from lifelines import GeneralizedGammaFitter
+        from lifelines.datasets import load_waltons
+        waltons = load_waltons()
+
+        ggf = GeneralizedGammaFitter()
+        ggf.fit(waltons['T'], waltons['E'])
+        ggf.plot()
+        ggf.summary
 
     Attributes
     ----------
@@ -76,8 +79,11 @@ class GeneralizedGammaFitter(KnownModelParametricUnivariateFitter):
         The estimated hazard (with custom timeline if provided)
     survival_function_ : DataFrame
         The estimated survival function (with custom timeline if provided)
-    cumumlative_density_ : DataFrame
+    cumulative_density_ : DataFrame
         The estimated cumulative density function (with custom timeline if provided)
+    density: DataFrame
+        The estimated density function (PDF) (with custom timeline if provided)
+
     variance_matrix_ : numpy array
         The variance matrix of the coefficients
     median_survival_time_: float
@@ -101,7 +107,6 @@ class GeneralizedGammaFitter(KnownModelParametricUnivariateFitter):
     _fitted_parameter_names = ["mu_", "ln_sigma_", "lambda_"]
     _bounds = [(None, None), (None, None), (None, None)]
     _compare_to_values = np.array([0.0, 0.0, 1.0])
-    _scipy_fit_options = {"ftol": 1e-7}
 
     def _create_initial_point(self, Ts, E, *args):
         if CensoringType.is_right_censoring(self):
@@ -110,62 +115,55 @@ class GeneralizedGammaFitter(KnownModelParametricUnivariateFitter):
             log_data = log(Ts[1])
         elif CensoringType.is_interval_censoring(self):
             # this fails if Ts[1] == Ts[0], so we add a some fudge factors.
-            log_data = log(Ts[1] - Ts[0] + 0.01)
+            log_data = log(Ts[1] - Ts[0] + 0.1)
         return np.array([log_data.mean(), log(log_data.std() + 0.01), 0.1])
-
-    def _survival_function(self, params, times):
-        mu_, ln_sigma_, lambda_ = params
-        sigma_ = safe_exp(ln_sigma_)
-        Z = (log(times) - mu_) / sigma_
-        if lambda_ > 0:
-            return gammaincc(1 / lambda_ ** 2, safe_exp(lambda_ * Z - 2 * np.log(lambda_)))
-        else:
-            return gammainc(1 / lambda_ ** 2, safe_exp(lambda_ * Z - 2 * np.log(-lambda_)))
 
     def _cumulative_hazard(self, params, times):
         mu_, ln_sigma_, lambda_ = params
+
         sigma_ = safe_exp(ln_sigma_)
         Z = (log(times) - mu_) / sigma_
         ilambda_2 = 1 / lambda_ ** 2
-        if lambda_ > 0:
-            v = -gammainccln(ilambda_2, safe_exp(lambda_ * Z - 2 * np.log(lambda_)))
-        else:
-            v = -gammaincln(ilambda_2, safe_exp(lambda_ * Z - 2 * np.log(-lambda_)))
-        return v
+        clipped_exp = np.clip(safe_exp(lambda_ * Z) * ilambda_2, 1e-15, 1e20)
 
-    def _log_1m_sf(self, params, times):
-        mu_, ln_sigma_, lambda_ = params
-        sigma_ = safe_exp(ln_sigma_)
-
-        Z = (log(times) - mu_) / sigma_
         if lambda_ > 0:
-            v = gammaincln(1 / lambda_ ** 2, safe_exp(lambda_ * Z - 2 * np.log(lambda_)))
+            v = -gammainccln(ilambda_2, clipped_exp)
+        elif lambda_ < 0:
+            v = -gammaincln(ilambda_2, clipped_exp)
         else:
-            v = gammainccln(1 / lambda_ ** 2, safe_exp(lambda_ * Z - 2 * np.log(-lambda_)))
+            v = -norm.logsf(Z)
+
         return v
 
     def _log_hazard(self, params, times):
         mu_, ln_sigma_, lambda_ = params
         ilambda_2 = 1 / lambda_ ** 2
         Z = (log(times) - mu_) / safe_exp(ln_sigma_)
+        clipped_exp = np.clip(safe_exp(lambda_ * Z) * ilambda_2, 1e-15, 1e20)
         if lambda_ > 0:
             v = (
                 log(lambda_)
                 - log(times)
                 - ln_sigma_
                 - gammaln(ilambda_2)
-                + (lambda_ * Z - safe_exp(lambda_ * Z) - 2 * log(lambda_)) * ilambda_2
-                - gammainccln(ilambda_2, safe_exp(lambda_ * Z - 2 * np.log(lambda_)))
+                + -2 * log(lambda_) * ilambda_2
+                - clipped_exp
+                + Z / lambda_
+                - gammainccln(ilambda_2, clipped_exp)
             )
-        else:
+        elif lambda_ < 0:
             v = (
                 log(-lambda_)
                 - log(times)
                 - ln_sigma_
                 - gammaln(ilambda_2)
-                + (lambda_ * Z - safe_exp(lambda_ * Z) - 2 * log(-lambda_)) * ilambda_2
-                - gammaincln(ilambda_2, safe_exp(lambda_ * Z - 2 * np.log(-lambda_)))
+                - 2 * log(-lambda_) * ilambda_2
+                - clipped_exp
+                + Z / lambda_
+                - gammaincln(ilambda_2, clipped_exp)
             )
+        else:
+            v = norm.logpdf(Z, loc=0, scale=1) - ln_sigma_ - log(times) - norm.logsf(Z)
         return v
 
     def percentile(self, p):

@@ -22,7 +22,7 @@ from lifelines import (
 from lifelines.tests.test_estimation import known_parametric_univariate_fitters
 
 from lifelines.generate_datasets import generate_random_lifetimes, generate_hazard_rates
-from lifelines.plotting import plot_lifetimes, cdf_plot, qq_plot, rmst_plot
+from lifelines.plotting import plot_lifetimes, cdf_plot, qq_plot, rmst_plot, add_at_risk_counts
 from lifelines.datasets import (
     load_waltons,
     load_regression_dataset,
@@ -32,6 +32,7 @@ from lifelines.datasets import (
     load_rossi,
     load_multicenter_aids_cohort_study,
     load_nh4,
+    load_diabetes,
 )
 from lifelines.generate_datasets import cumulative_integral
 
@@ -53,9 +54,7 @@ class TestPlotting:
 
         self.plt = plt
 
-    def test_parametric_univariate_fitters_has_hazard_plotting_methods(
-        self, block, known_parametric_univariate_fitters
-    ):
+    def test_parametric_univariate_fitters_has_hazard_plotting_methods(self, block, known_parametric_univariate_fitters):
         positive_sample_lifetimes = np.arange(1, 100)
         for fitter in known_parametric_univariate_fitters:
             f = fitter().fit(positive_sample_lifetimes)
@@ -63,9 +62,7 @@ class TestPlotting:
         self.plt.title("test_parametric_univariate_fitters_has_hazard_plotting_methods")
         self.plt.show(block=block)
 
-    def test_parametric_univaraite_fitters_has_cumhazard_plotting_methods(
-        self, block, known_parametric_univariate_fitters
-    ):
+    def test_parametric_univaraite_fitters_has_cumhazard_plotting_methods(self, block, known_parametric_univariate_fitters):
         positive_sample_lifetimes = np.arange(1, 100)
         for fitter in known_parametric_univariate_fitters:
             f = fitter().fit(positive_sample_lifetimes)
@@ -74,9 +71,7 @@ class TestPlotting:
         self.plt.title("test_parametric_univaraite_fitters_has_cumhazard_plotting_methods")
         self.plt.show(block=block)
 
-    def test_parametric_univariate_fitters_has_survival_plotting_methods(
-        self, block, known_parametric_univariate_fitters
-    ):
+    def test_parametric_univariate_fitters_has_survival_plotting_methods(self, block, known_parametric_univariate_fitters):
         positive_sample_lifetimes = np.arange(1, 100)
         for fitter in known_parametric_univariate_fitters:
             f = fitter().fit(positive_sample_lifetimes)
@@ -115,6 +110,49 @@ class TestPlotting:
         kmf.plot(at_risk_counts=True)
         self.plt.title("test_kmf_with_risk_counts")
         self.plt.show(block=block)
+
+    def test_kmf_add_at_risk_counts_with_subplot(self, block, kmf):
+        data1 = np.random.exponential(10, size=(100))
+        kmf.fit(data1)
+
+        fig = self.plt.figure()
+        axes = fig.subplots(1, 2)
+        kmf.plot(ax=axes[0])
+        add_at_risk_counts(kmf, ax=axes[0])
+        kmf.plot(ax=axes[1])
+
+        self.plt.title("test_kmf_add_at_risk_counts_with_subplot")
+        self.plt.show(block=block)
+
+    def test_kmf_add_at_risk_counts_with_custom_subplot(self, block, kmf):
+        # https://github.com/CamDavidsonPilon/lifelines/issues/991#issuecomment-614427882
+        import lifelines
+        import matplotlib as mpl
+        from lifelines.datasets import load_waltons
+
+        plt = self.plt
+        waltons = load_waltons()
+        ix = waltons["group"] == "control"
+
+        img_no = 3
+
+        height = 4 * img_no
+        half_inch = 0.5 / height  # in percent height
+        _fig = plt.figure(figsize=(6, height), dpi=100)
+        gs = mpl.gridspec.GridSpec(img_no, 1)
+        plt.subplots_adjust(left=0.08, right=0.98, bottom=half_inch, top=1 - half_inch)
+
+        for i in range(img_no):
+            ax = plt.subplot(gs[i, 0])
+            kmf_control = lifelines.KaplanMeierFitter()
+            ax = kmf_control.fit(waltons.loc[ix]["T"], waltons.loc[ix]["E"], label="control").plot(ax=ax)
+            kmf_exp = lifelines.KaplanMeierFitter()
+            ax = kmf_exp.fit(waltons.loc[~ix]["T"], waltons.loc[~ix]["E"], label="exp").plot(ax=ax)
+            ax = lifelines.plotting.add_at_risk_counts(kmf_exp, kmf_control, ax=ax)
+
+        plt.subplots_adjust(hspace=0.6)
+        plt.title("test_kmf_add_at_risk_counts_with_custom_subplot")
+        plt.show(block=block)
 
     def test_naf_plotting_with_custom_colours(self, block):
         data1 = np.random.exponential(5, size=(200, 1))
@@ -175,6 +213,14 @@ class TestPlotting:
         ax = aaf.plot(iloc=slice(0, aaf.cumulative_hazards_.shape[0] - 100))
         ax.set_xlabel("time")
         ax.set_title("test_aalen_additive_plot")
+        self.plt.show(block=block)
+        return
+
+    def test_kmf_with_interval_censoring_plotting(self, block):
+        kmf = KaplanMeierFitter()
+        left, right = load_diabetes()["left"], load_diabetes()["right"]
+        kmf.fit_interval_censoring(left, right)
+        kmf.plot(color="r")
         self.plt.show(block=block)
         return
 
@@ -296,11 +342,14 @@ class TestPlotting:
 
     def test_parametric_plotting_with_show_censors(self, block):
         n = 200
-        T = 50 * np.random.exponential(1, size=(n, 1)) ** 2
-        E = np.random.rand(n) > 0.2
+        T = (np.sqrt(50) * np.random.exponential(1, size=n)) ** 2
+        E = T < 100
+        T = np.minimum(T, 100)
 
-        wf = WeibullFitter().fit(T, E, timeline=np.linspace(0, 5, 1000))
+        wf = WeibullFitter().fit(T, E)
+        wf.plot_density(show_censors=True)
         wf.plot_cumulative_density(show_censors=True)
+
         self.plt.title("test_parametric_plotting_with_show_censors:cumulative_density")
         self.plt.show(block=block)
 
@@ -310,6 +359,10 @@ class TestPlotting:
 
         wf.plot_cumulative_hazard(show_censors=True)
         self.plt.title("test_parametric_plotting_with_show_censors:cumulative_hazard")
+        self.plt.show(block=block)
+
+        wf.plot_density(show_censors=True)
+        self.plt.title("test_parametric_plotting_with_show_censors:density")
         self.plt.show(block=block)
         return
 
@@ -488,9 +541,7 @@ class TestPlotting:
         timeline = np.linspace(0, 70, 10000)
         hz, coef, X = generate_hazard_rates(n, d, timeline)
         X.columns = coef.columns
-        cumulative_hazards = pd.DataFrame(
-            cumulative_integral(coef.values, timeline), index=timeline, columns=coef.columns
-        )
+        cumulative_hazards = pd.DataFrame(cumulative_integral(coef.values, timeline), index=timeline, columns=coef.columns)
         T = generate_random_lifetimes(hz, timeline)
         X["T"] = T
         X["E"] = np.random.binomial(1, 1, n)
@@ -513,9 +564,7 @@ class TestPlotting:
         timeline = np.linspace(0, 70, 10000)
         hz, coef, X = generate_hazard_rates(n, d, timeline)
         X.columns = coef.columns
-        cumulative_hazards = pd.DataFrame(
-            cumulative_integral(coef.values, timeline), index=timeline, columns=coef.columns
-        )
+        cumulative_hazards = pd.DataFrame(cumulative_integral(coef.values, timeline), index=timeline, columns=coef.columns)
         T = generate_random_lifetimes(hz, timeline)
         T[np.isinf(T)] = 10
         X["T"] = T
@@ -636,6 +685,18 @@ class TestPlotting:
         self.plt.suptitle("test_qq_plot_left_censoring_with_known_distribution")
         self.plt.show(block=block)
 
+    def test_qq_plot_with_weights_and_entry(self, block):
+        from lifelines.utils import survival_events_from_table
+
+        df = pd.DataFrame(index=[60, 171, 263, 427, 505, 639])
+        df["death"] = [1, 1, 1, 0, 1, 0]
+        df["censored"] = [0, 0, 0, 3, 0, 330]
+        T, E, W = survival_events_from_table(df, observed_deaths_col="death", censored_col="censored")
+        wf = WeibullFitter().fit(T, E, weights=W, entry=0.0001 * np.ones_like(T))
+        ax = qq_plot(wf)
+        self.plt.suptitle("test_qq_plot_with_weights_and_entry")
+        self.plt.show(block=block)
+
     def test_qq_plot_right_censoring_with_known_distribution(self, block):
         N = 3000
         T_actual = scipy.stats.fisk(8, 0, 1).rvs(N)
@@ -668,4 +729,23 @@ class TestPlotting:
 
         rmst_plot(kmf_con, model2=kmf_exp, t=40.0)
         self.plt.title("test_rmst_plot_with_two_model")
+        self.plt.show(block=block)
+
+    def test_hide_ci_from_legend(self, block):
+        waltons = load_waltons()
+        kmf = KaplanMeierFitter().fit(waltons["T"], waltons["E"])
+        ax = kmf.plot(ci_show=True, ci_only_lines=True, ci_legend=False)
+        ax.legend(title="Legend title")
+        self.plt.title("test_hide_ci_from_legend")
+        self.plt.show(block=block)
+
+    def test_logx_plotting(self, block):
+        waltons = load_waltons()
+        kmf = KaplanMeierFitter().fit(np.exp(waltons["T"]), waltons["E"], timeline=np.logspace(0, 40))
+        ax = kmf.plot(logx=True)
+
+        wf = WeibullFitter().fit(np.exp(waltons["T"]), waltons["E"], timeline=np.logspace(0, 40))
+        wf.plot_survival_function(logx=True, ax=ax)
+
+        self.plt.title("test_logx_plotting")
         self.plt.show(block=block)
