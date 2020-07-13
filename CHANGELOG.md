@@ -1,5 +1,73 @@
 ## Changelog
 
+#### 0.24.15 - 2020-07-09
+
+##### New features
+ - improved algorithm choice for large Dataframes for Cox models. Should see a significant performance boost.
+
+##### Bug fixes
+- fixed `utils.median_survival_time` not accepting Pandas Series.
+
+#### 0.24.15 - 2020-07-07
+
+##### Bug fixes
+- fixed an edge case in `KaplanMeierFitter` where a really late entry would occur after all other population had died.
+- fixed `plot` in `BreslowFlemingtonHarrisFitter`
+- fixed bug where using `conditional_after` and `times` in `CoxPHFitter("spline")` prediction methods would be ignored.
+
+
+#### 0.24.14 - 2020-07-02
+
+##### Bug fixes
+- fixed a bug where using `conditional_after` and `times` in prediction methods would result in a shape error
+- fixed a bug where `score` was not able to be used in splined `CoxPHFitter`
+- fixed a bug where some columns would not be displayed in `print_summary`
+
+#### 0.24.13 - 2020-06-22
+
+##### Bug fixes
+- fixed a bug where `CoxPHFitter` would ignore inputed `alpha` levels for confidence intervals
+- fixed a bug where `CoxPHFitter` would fail with working with `sklearn_adapter`
+
+
+#### 0.24.12 - 2020-06-20
+
+##### New features
+ - improved convergence of `GeneralizedGamma(Regression)Fitter`.
+
+
+#### 0.24.11 - 2020-06-17
+
+##### New features
+ - new spline regression model `CRCSplineFitter` based on the paper "A flexible parametric accelerated failure time model" by Michael J. Crowther, Patrick Royston, Mark Clements.
+ - new survival probability calibration tool `lifelines.calibration.survival_probability_calibration` to help validate regression models. Based on “Graphical calibration curves and the integrated calibration index (ICI) for survival models” by P. Austin, F. Harrell, and D. van Klaveren.
+
+##### API Changes
+ - (and bug fix) scalar parameters in regression models were not being penalized by `penalizer` - we now penalizing everything except intercept terms in linear relationships.
+
+
+#### 0.24.10 - 2020-06-16
+
+##### New features
+ - New improvements when using splines model in CoxPHFitter - it should offer much better prediction and baseline-hazard estimation, including extrapolation and interpolation.
+
+##### API Changes
+ - Related to above: the fitted spline parameters are now available in the `.summary` and `.print_summary` methods.
+
+##### Bug fixes
+- fixed a bug in initialization of some interval-censoring models -> better convergence.
+
+
+#### 0.24.9 - 2020-06-05
+
+##### New features
+ - Faster NPMLE for interval censored data
+ - New weightings available in the `logrank_test`: `wilcoxon`, `tarone-ware`, `peto`, `fleming-harrington`. Thanks @sean-reed
+ - new interval censored dataset: `lifelines.datasets.load_mice`
+
+##### Bug fixes
+ - Cleared up some mislabeling in `plot_loglogs`. Thanks @sean-reed!
+ - tuples are now able to be used as input in univariate models.
 
 #### 0.24.8 - 2020-05-17
 

@@ -35,6 +35,7 @@ class PiecewiseExponentialRegressionFitter(ParametricRegressionFitter):
     paper replication `here <https://github.com/CamDavidsonPilon/lifelines-replications/blob/master/replications/Friedman_1982.ipynb>`_
 
     """
+    _FAST_MEDIAN_PREDICT = True
 
     # about 50% faster than BFGS
     _scipy_fit_method = "SLSQP"
@@ -62,7 +63,7 @@ class PiecewiseExponentialRegressionFitter(ParametricRegressionFitter):
         coef_penalty = 0
         if self.penalizer > 0:
             for i in range(params_stacked.shape[1]):
-                if not self._constant_cols[i]:
+                if not self._cols_to_not_penalize[i]:
                     coef_penalty = coef_penalty + (params_stacked[:, i]).var()
 
         return neg_ll + self.penalizer * coef_penalty

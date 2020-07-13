@@ -97,6 +97,7 @@ class Printer:
         decimals = self.decimals
         df = self.model.summary
         justify = self.justify
+        ci = 100 * (1 - self.model.alpha)
 
         print(self.model)
         for string, value in self.headers:
@@ -114,10 +115,10 @@ class Printer:
                 "coef",
                 "exp(coef)",
                 "se(coef)",
-                "coef lower 95%",
-                "coef upper 95%",
-                "exp(coef) lower 95%",
-                "exp(coef) upper 95%",
+                "coef lower %d%%" % ci,
+                "coef upper %d%%" % ci,
+                "exp(coef) lower %d%%" % ci,
+                "exp(coef) upper %d%%" % ci,
                 "z",
                 "p",
                 "-log2(p)",
@@ -129,10 +130,10 @@ class Printer:
                 "coef",
                 "exp(coef)",
                 "se(coef)",
-                "coef lower 95%",
-                "coef upper 95%",
-                "exp(coef) lower 95%",
-                "exp(coef) upper 95%",
+                "coef lower %d%%" % ci,
+                "coef upper %d%%" % ci,
+                "exp(coef) lower %d%%" % ci,
+                "exp(coef) upper %d%%" % ci,
             ]
             second_row_set = ["z", "p", "-log2(p)"]
 
@@ -140,7 +141,7 @@ class Printer:
             df.to_string(
                 float_format=utils.format_floats(decimals),
                 formatters={
-                    **{c: utils.format_exp_floats(decimals) for c in columns if "exp(" in c},
+                    **{c: utils.format_exp_floats(decimals) for c in columns if "exp(coef)" in c},
                     **{utils.leading_space("p"): utils.format_p_value(decimals)},
                 },
                 columns=[c for c in utils.map_leading_space(first_row_set) if c in columns],
@@ -165,4 +166,3 @@ class Printer:
             print("---")
             for string, value in self.footers:
                 print("{} = {}".format(string, value))
-        print()

@@ -43,6 +43,7 @@ from lifelines.utils import (
 )
 
 from lifelines.fitters import BaseFitter, ParametricUnivariateFitter, ParametricRegressionFitter
+from lifelines.fitters.coxph_fitter import SemiParametricPHFitter
 
 from lifelines import (
     WeibullFitter,
@@ -65,6 +66,7 @@ from lifelines import (
     GeneralizedGammaRegressionFitter,
     SplineFitter,
     MixtureCureFitter,
+    CRCSplineFitter,
 )
 
 from lifelines.datasets import (
@@ -123,6 +125,7 @@ class SplineFitterTesting(SplineFitter):
 
 class CustomRegressionModelTesting(ParametricRegressionFitter):
 
+    _FAST_MEDIAN_PREDICT = True
     _fitted_parameter_names = ["lambda_", "beta_", "rho_"]
 
     def __init__(self, **kwargs):
@@ -528,7 +531,7 @@ class TestUnivariateFitters:
                 pass
             assert not (pd.isnull(fitter.confidence_interval_)).all().all()
 
-    def test_lists_as_input(self, positive_sample_lifetimes, univariate_fitters):
+    def test_lists_and_tuples_as_input(self, positive_sample_lifetimes, univariate_fitters):
         T, C = positive_sample_lifetimes
         for f in univariate_fitters:
             fitter = f()
@@ -536,21 +539,29 @@ class TestUnivariateFitters:
             if isinstance(fitter, NelsonAalenFitter):
                 with_array = fitter.fit(T, C).cumulative_hazard_
                 with_list = fitter.fit(list(T), list(C)).cumulative_hazard_
+                with_tuple = fitter.fit(tuple(T), tuple(C)).cumulative_hazard_
                 assert_frame_equal(with_list, with_array)
+                assert_frame_equal(with_tuple, with_array)
 
             else:
                 with_array = fitter.fit(T, C).survival_function_
                 with_list = fitter.fit(list(T), list(C)).survival_function_
+                with_tuple = fitter.fit(tuple(T), tuple(C)).survival_function_
                 assert_frame_equal(with_list, with_array)
+                assert_frame_equal(with_tuple, with_array)
 
                 if isinstance(fitter, ParametricUnivariateFitter):
                     with_array = fitter.fit_interval_censoring(T, T + 1, (T == T + 1)).survival_function_
                     with_list = fitter.fit_interval_censoring(list(T), list(T + 1), list((T == T + 1))).survival_function_
+                    with_tuple = fitter.fit_interval_censoring(tuple(T), tuple(T + 1), tuple((T == T + 1))).survival_function_
                     assert_frame_equal(with_list, with_array)
+                    assert_frame_equal(with_tuple, with_array)
 
                     with_array = fitter.fit_left_censoring(T, C).survival_function_
                     with_list = fitter.fit_left_censoring(list(T), list(C)).survival_function_
+                    with_tuple = fitter.fit_left_censoring(tuple(T), tuple(C)).survival_function_
                     assert_frame_equal(with_list, with_array)
+                    assert_frame_equal(with_tuple, with_array)
 
     def test_subtraction_function(self, positive_sample_lifetimes, univariate_fitters):
         T2 = np.arange(1, 50)
@@ -701,6 +712,13 @@ class TestLogNormalFitter:
     def lnf(self):
         return LogNormalFitter()
 
+    def test_lognormal_model_has_sensible_interval_censored_initial_values_for_data_with_lots_of_infs(self, lnf):
+        left = [1, 0, 2, 5, 4]
+        right = [np.inf, np.inf, np.inf, 5, 6]
+        lnf.fit_interval_censoring(left, right)
+        assert lnf._initial_values[0] < 10
+        assert lnf._initial_values[1] < 10
+
     def test_fit(self, lnf):
         T = np.exp(np.random.randn(100000))
         E = np.ones_like(T)
@@ -803,6 +821,13 @@ class TestLogLogisticFitter:
     @pytest.fixture()
     def llf(self):
         return LogLogisticFitter()
+
+    def test_loglogistic_model_has_sensible_interval_censored_initial_values_for_data_with_lots_of_infs(self, llf):
+        left = [1, 0, 2, 5, 4]
+        right = [np.inf, np.inf, np.inf, 5, 6]
+        llf.fit_interval_censoring(left, right)
+        assert llf._initial_values[0] < 10
+        assert llf._initial_values[1] < 10
 
     def test_loglogistic_model_does_not_except_negative_or_zero_values(self, llf):
 
@@ -1447,6 +1472,14 @@ class TestKaplanMeierFitter:
         npt.assert_allclose(kmf_interval.survival_function_.loc[6, "NPMLE_estimate_upper"], 0.375, rtol=1e-2)
         npt.assert_allclose(kmf_interval.survival_function_.loc[6, "NPMLE_estimate_lower"], 0.0, rtol=1e-2)
 
+    def test_really_late_entrance(self):
+        T = [1, 2, 3, 1, 2, 6]
+        entries = [0, 0, 0, 0, 0, 5]
+
+        kmf = KaplanMeierFitter()
+        kmf.fit(T, entry=entries)
+        assert np.all((kmf.survival_function_.diff().dropna() <= 0))
+
 
 class TestNelsonAalenFitter:
     def nelson_aalen(self, lifetimes, observed=None):
@@ -1577,14 +1610,14 @@ class TestParametricRegressionFitter:
 
     def test_penalizer_can_be_an_array(self, rossi):
 
-        wf_array = WeibullAFTFitter(penalizer=0.01 * np.ones(7), fit_intercept=False).fit(rossi, "week", "arrest")
+        wf_array = WeibullAFTFitter(penalizer=0.01 * np.ones(8), fit_intercept=False).fit(rossi, "week", "arrest")
         wf_float = WeibullAFTFitter(penalizer=0.01, fit_intercept=False).fit(rossi, "week", "arrest")
 
         assert_frame_equal(wf_array.summary, wf_float.summary)
 
     def test_penalizer_can_be_an_array_and_check_it_behaves_as_expected(self, rossi):
 
-        penalty = np.array([0, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01])
+        penalty = np.array([0, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01])
         wf_array = WeibullAFTFitter(penalizer=penalty, fit_intercept=False).fit(rossi, "week", "arrest")
         wf_float = WeibullAFTFitter(penalizer=0.01, fit_intercept=False).fit(rossi, "week", "arrest")
 
@@ -1750,12 +1783,33 @@ class TestRegressionFitters:
             PiecewiseExponentialRegressionFitter(breakpoints=[25.0]),
             CustomRegressionModelTesting(penalizer=1.0),
             GeneralizedGammaRegressionFitter(penalizer=5.0),
+            # CRCSplineFitter(3),
         ]
 
     @pytest.fixture
     def regression_models(self, regression_models_sans_strata_model):
         regression_models_sans_strata_model.append(CoxPHFitter(strata=["race", "paro", "mar", "wexp"]))
         return regression_models_sans_strata_model
+
+    def test_alpha_will_vary_the_statistics_in_summary(self, rossi):
+        reg_005 = WeibullAFTFitter(alpha=0.05).fit(rossi, "week", "arrest")
+        reg_010 = WeibullAFTFitter(alpha=0.10).fit(rossi, "week", "arrest")
+        assert (
+            reg_005.summary.loc[("lambda_", "fin"), "coef lower 95%"] < reg_010.summary.loc[("lambda_", "fin"), "coef lower 90%"]
+        )
+
+        reg_005 = CoxPHFitter(alpha=0.05).fit(rossi, "week", "arrest")
+        reg_010 = CoxPHFitter(alpha=0.10).fit(rossi, "week", "arrest")
+        assert reg_005.summary.loc["fin", "coef lower 95%"] < reg_010.summary.loc["fin", "coef lower 90%"]
+
+        reg_005 = CoxPHFitter(baseline_estimation_method="spline", n_baseline_knots=2, alpha=0.05).fit(rossi, "week", "arrest")
+        reg_010 = CoxPHFitter(baseline_estimation_method="spline", n_baseline_knots=2, alpha=0.10).fit(rossi, "week", "arrest")
+        assert reg_005.summary.loc[("beta_", "fin"), "coef lower 95%"] < reg_010.summary.loc[("beta_", "fin"), "coef lower 90%"]
+
+    def test_spline_model_can_use_score(self, rossi):
+        cph_spline = CoxPHFitter(baseline_estimation_method="spline", n_baseline_knots=2)
+        cph_spline.fit(rossi, "week", "arrest")
+        cph_spline.score(rossi, scoring_method="log_likelihood")
 
     def test_score_method_returns_same_value_for_unpenalized_models(self, rossi):
         regression_models = [CoxPHFitter(), WeibullAFTFitter()]
@@ -1824,11 +1878,6 @@ class TestRegressionFitters:
             with pytest.raises(TypeError, match="NaNs were detected in the dataset"):
                 fitter.fit(df, "T", "E")
 
-    def test_fit_methods_require_duration_col(self, rossi, regression_models):
-        for fitter in regression_models:
-            with pytest.raises(TypeError):
-                fitter.fit(rossi)
-
     def test_predict_methods_in_regression_return_same_types(self, regression_models, rossi):
 
         fitted_regression_models = list(
@@ -1887,7 +1936,7 @@ class TestRegressionFitters:
                     assert_series_equal(
                         hazards.drop("_intercept", axis=0, level=1),
                         hazards_norm.drop("_intercept", axis=0, level=1),
-                        check_less_precise=2,
+                        check_less_precise=1,
                     )
                 else:
                     assert_series_equal(hazards, hazards_norm, check_less_precise=1)
@@ -2634,6 +2683,101 @@ class TestWeibullAFTFitter:
         aft.print_summary()
 
 
+class TestCoxPHFitter_SemiParametric:
+    @pytest.fixture
+    def cph(self):
+        return SemiParametricPHFitter()
+
+    def test_single_efron_computed_by_hand_examples(self, data_nus, cph):
+        X = data_nus["x"][:, None]
+        T = data_nus["t"]
+        E = data_nus["E"]
+        weights = np.ones_like(T)
+
+        # Enforce numpy arrays
+        X = np.array(X)
+        T = np.array(T)
+        E = np.array(E)
+
+        # Want as bools
+        E = E.astype(bool)
+
+        # tests from http://courses.nus.edu.sg/course/stacar/internet/st3242/handouts/notes3.pdf
+        beta = np.array([0])
+
+        l, u, _ = cph._get_efron_values_single(X, T, E, weights, beta)
+        l = -l
+
+        assert np.abs(u[0] - -2.51) < 0.05
+        assert np.abs(l[0][0] - 77.13) < 0.05
+        beta = beta + u / l[0]
+        assert np.abs(beta - -0.0326) < 0.05
+
+        l, u, _ = cph._get_efron_values_single(X, T, E, weights, beta)
+        l = -l
+
+        assert np.abs(l[0][0] - 72.83) < 0.05
+        assert np.abs(u[0] - -0.069) < 0.05
+        beta = beta + u / l[0]
+        assert np.abs(beta - -0.0325) < 0.01
+
+        l, u, _ = cph._get_efron_values_single(X, T, E, weights, beta)
+        l = -l
+
+        assert np.abs(l[0][0] - 72.70) < 0.01
+        assert np.abs(u[0] - -0.000061) < 0.01
+        beta = beta + u / l[0]
+        assert np.abs(beta - -0.0335) < 0.01
+
+    def test_batch_efron_computed_by_hand_examples(self, data_nus, cph):
+        X = data_nus["x"][:, None]
+        T = data_nus["t"]
+        E = data_nus["E"]
+        weights = np.ones_like(T)
+
+        # Enforce numpy arrays
+        X = np.array(X)
+        T = np.array(T)
+        E = np.array(E)
+
+        # Want as bools
+        E = E.astype(bool)
+
+        # tests from http://courses.nus.edu.sg/course/stacar/internet/st3242/handouts/notes3.pdf
+        beta = np.array([0])
+
+        l, u, _ = cph._get_efron_values_batch(X, T, E, weights, beta)
+        l = -l
+
+        assert np.abs(u[0] - -2.51) < 0.05
+        assert np.abs(l[0][0] - 77.13) < 0.05
+        beta = beta + u / l[0]
+        assert np.abs(beta - -0.0326) < 0.05
+
+        l, u, _ = cph._get_efron_values_batch(X, T, E, weights, beta)
+        l = -l
+
+        assert np.abs(l[0][0] - 72.83) < 0.05
+        assert np.abs(u[0] - -0.069) < 0.05
+        beta = beta + u / l[0]
+        assert np.abs(beta - -0.0325) < 0.01
+
+        l, u, _ = cph._get_efron_values_batch(X, T, E, weights, beta)
+        l = -l
+
+        assert np.abs(l[0][0] - 72.70) < 0.01
+        assert np.abs(u[0] - -0.000061) < 0.01
+        beta = beta + u / l[0]
+        assert np.abs(beta - -0.0335) < 0.01
+
+    def test_efron_newtons_method(self, data_nus, cph):
+        cph._batch_mode = False
+        newton = cph._newton_rhapson_for_efron_model
+        X, T, E, W = (data_nus[["x"]], data_nus["t"], data_nus["E"], pd.Series(np.ones_like(data_nus["t"])))
+
+        assert np.abs(newton(X, T, E, W)[0] - -0.0335) < 0.0001
+
+
 class TestCoxPHFitter:
     @pytest.fixture
     def cph(self):
@@ -2641,7 +2785,19 @@ class TestCoxPHFitter:
 
     @pytest.fixture
     def cph_spline(self):
-        return CoxPHFitter(baseline_estimation_method="spline")
+        return CoxPHFitter(baseline_estimation_method="spline", n_baseline_knots=1)
+
+    def test_timeline_argument_can_be_set(self, rossi, cph_spline, cph):
+        timeline = np.linspace(0, 100)
+        cph.fit(rossi, "week", "arrest", timeline=timeline)
+
+        cph_spline.fit(rossi, "week", "arrest", timeline=timeline)
+
+        npt.assert_allclose(cph_spline.timeline, timeline)
+        npt.assert_allclose(cph.timeline, timeline)
+
+        npt.assert_allclose(cph.predict_survival_function(rossi).index.values, timeline)
+        npt.assert_allclose(cph_spline.predict_survival_function(rossi).index.values, timeline)
 
     def test_penalizer_can_be_an_array(self, rossi):
 
@@ -2689,7 +2845,18 @@ class TestCoxPHFitter:
 
         cph_sp = CoxPHFitter(baseline_estimation_method="spline", n_baseline_knots=1)
         cph_sp.fit(test_data, duration_col="Days")
+
+        # check survival is always decreasing
         assert np.all(cph_sp.baseline_survival_.diff().dropna() < 0)
+
+    def test_spline_and_breslow_models_offer_very_comparible_baseline_survivals(self, rossi):
+        cph_breslow = CoxPHFitter().fit(rossi, "week", "arrest")
+        cph_spline = CoxPHFitter(baseline_estimation_method="spline", n_baseline_knots=2).fit(rossi, "week", "arrest")
+
+        bh_spline = cph_spline.baseline_survival_at_times()
+        bh_breslow = cph_breslow.baseline_survival_
+
+        assert (bh_breslow["baseline survival"] - bh_spline["baseline survival"]).std() < 0.005
 
     def test_penalty_term_is_used_in_log_likelihood_value(self, rossi):
         assert (
@@ -2698,9 +2865,15 @@ class TestCoxPHFitter:
             < CoxPHFitter(penalizer=0).fit(rossi, "week", "arrest").log_likelihood_
         )
         assert (
-            CoxPHFitter(penalizer=1e-6, baseline_estimation_method="spline").fit(rossi, "week", "arrest").log_likelihood_
-            < CoxPHFitter(penalizer=1e-8, baseline_estimation_method="spline").fit(rossi, "week", "arrest").log_likelihood_
-            < CoxPHFitter(penalizer=0, baseline_estimation_method="spline").fit(rossi, "week", "arrest").log_likelihood_
+            CoxPHFitter(penalizer=1e-6, baseline_estimation_method="spline", n_baseline_knots=1)
+            .fit(rossi, "week", "arrest")
+            .log_likelihood_
+            < CoxPHFitter(penalizer=1e-8, baseline_estimation_method="spline", n_baseline_knots=1)
+            .fit(rossi, "week", "arrest")
+            .log_likelihood_
+            < CoxPHFitter(penalizer=0, baseline_estimation_method="spline", n_baseline_knots=1)
+            .fit(rossi, "week", "arrest")
+            .log_likelihood_
         )
 
     def test_baseline_estimation_for_spline(self, rossi, cph_spline):
@@ -2722,6 +2895,33 @@ class TestCoxPHFitter:
         npt.assert_allclose(explicit.loc[10.0, 0], p2.loc[2.0, 0])
         npt.assert_allclose(explicit.loc[12.0, 0], p2.loc[4.0, 0])
         npt.assert_allclose(explicit.loc[20.0, 0], p2.loc[12.0, 0])
+
+    def test_conditional_after_with_custom_times(self, rossi):
+        cph_semi = CoxPHFitter(baseline_estimation_method="breslow").fit(rossi, "week", "arrest")
+        cph_spline = CoxPHFitter(n_baseline_knots=2, baseline_estimation_method="spline").fit(rossi, "week", "arrest")
+        times = np.arange(5)
+
+        # predict single
+        result = cph_semi.fit(rossi, "week", "arrest").predict_survival_function(
+            rossi.iloc[0], times=times, conditional_after=[10]
+        )
+        npt.assert_allclose(result.index.values, times)
+
+        result = cph_spline.fit(rossi, "week", "arrest").predict_survival_function(
+            rossi.iloc[0], times=times, conditional_after=[10]
+        )
+        npt.assert_allclose(result.index.values, times)
+
+        # predict multiple
+        result = cph_semi.fit(rossi, "week", "arrest").predict_survival_function(
+            rossi.iloc[:10], times=times, conditional_after=[10] * 10
+        )
+        npt.assert_allclose(result.index.values, times)
+
+        result = cph_spline.fit(rossi, "week", "arrest").predict_survival_function(
+            rossi.iloc[:10], times=times, conditional_after=[10] * 10
+        )
+        npt.assert_allclose(result.index.values, times)
 
     def test_conditional_after_with_strata_in_prediction(self, rossi, cph):
         rossi.loc[rossi["week"] == 1, "week"] = 0
@@ -3125,97 +3325,6 @@ log-likelihood ratio test = 33.27 on 7 df
     def test_log_likelihood(self, data_nus, cph):
         cph.fit(data_nus, duration_col="t", event_col="E")
         assert abs(cph.log_likelihood_ - -12.7601409152) < 0.001
-
-    def test_single_efron_computed_by_hand_examples(self, data_nus, cph):
-
-        X = data_nus["x"][:, None]
-        T = data_nus["t"]
-        E = data_nus["E"]
-        weights = np.ones_like(T)
-
-        # Enforce numpy arrays
-        X = np.array(X)
-        T = np.array(T)
-        E = np.array(E)
-
-        # Want as bools
-        E = E.astype(bool)
-
-        # tests from http://courses.nus.edu.sg/course/stacar/internet/st3242/handouts/notes3.pdf
-        beta = np.array([0])
-
-        l, u, _ = cph._get_efron_values_single(X, T, E, weights, beta)
-        l = -l
-
-        assert np.abs(u[0] - -2.51) < 0.05
-        assert np.abs(l[0][0] - 77.13) < 0.05
-        beta = beta + u / l[0]
-        assert np.abs(beta - -0.0326) < 0.05
-
-        l, u, _ = cph._get_efron_values_single(X, T, E, weights, beta)
-        l = -l
-
-        assert np.abs(l[0][0] - 72.83) < 0.05
-        assert np.abs(u[0] - -0.069) < 0.05
-        beta = beta + u / l[0]
-        assert np.abs(beta - -0.0325) < 0.01
-
-        l, u, _ = cph._get_efron_values_single(X, T, E, weights, beta)
-        l = -l
-
-        assert np.abs(l[0][0] - 72.70) < 0.01
-        assert np.abs(u[0] - -0.000061) < 0.01
-        beta = beta + u / l[0]
-        assert np.abs(beta - -0.0335) < 0.01
-
-    def test_batch_efron_computed_by_hand_examples(self, data_nus, cph):
-
-        X = data_nus["x"][:, None]
-        T = data_nus["t"]
-        E = data_nus["E"]
-        weights = np.ones_like(T)
-
-        # Enforce numpy arrays
-        X = np.array(X)
-        T = np.array(T)
-        E = np.array(E)
-
-        # Want as bools
-        E = E.astype(bool)
-
-        # tests from http://courses.nus.edu.sg/course/stacar/internet/st3242/handouts/notes3.pdf
-        beta = np.array([0])
-
-        l, u, _ = cph._get_efron_values_batch(X, T, E, weights, beta)
-        l = -l
-
-        assert np.abs(u[0] - -2.51) < 0.05
-        assert np.abs(l[0][0] - 77.13) < 0.05
-        beta = beta + u / l[0]
-        assert np.abs(beta - -0.0326) < 0.05
-
-        l, u, _ = cph._get_efron_values_batch(X, T, E, weights, beta)
-        l = -l
-
-        assert np.abs(l[0][0] - 72.83) < 0.05
-        assert np.abs(u[0] - -0.069) < 0.05
-        beta = beta + u / l[0]
-        assert np.abs(beta - -0.0325) < 0.01
-
-        l, u, _ = cph._get_efron_values_batch(X, T, E, weights, beta)
-        l = -l
-
-        assert np.abs(l[0][0] - 72.70) < 0.01
-        assert np.abs(u[0] - -0.000061) < 0.01
-        beta = beta + u / l[0]
-        assert np.abs(beta - -0.0335) < 0.01
-
-    def test_efron_newtons_method(self, data_nus, cph):
-        cph._batch_mode = False
-        newton = cph._newton_rhapson_for_efron_model
-        X, T, E, W = (data_nus[["x"]], data_nus["t"], data_nus["E"], pd.Series(np.ones_like(data_nus["t"])))
-
-        assert np.abs(newton(X, T, E, W)[0] - -0.0335) < 0.0001
 
     def test_fit_method(self, data_nus, cph):
         cph.fit(data_nus, duration_col="t", event_col="E")

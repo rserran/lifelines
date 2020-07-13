@@ -128,9 +128,9 @@ def qth_survival_times(q, survival_functions) -> Union[pd.DataFrame, float]:
     ----------
     q: float or array
       a float between 0 and 1 that represents the time when the survival function hits the qth percentile.
-    survival_functions: a (n,d) DataFrame or numpy array.
-      If DataFrame, will return index values (actual times)
-      If numpy array, will return indices.
+    survival_functions: a (n,d) DataFrame, Series, or NumPy array.
+      If DataFrame or Series, will return index values (actual times)
+      If NumPy array, will return indices.
 
     Returns
     -------
@@ -218,7 +218,7 @@ def median_survival_times(model_or_survival_function) -> float:
     """
     import lifelines
 
-    if isinstance(model_or_survival_function, pd.DataFrame):
+    if isinstance(model_or_survival_function, (pd.DataFrame, pd.Series)):
         return qth_survival_times(0.5, model_or_survival_function)
     elif isinstance(model_or_survival_function, lifelines.fitters.UnivariateFitter):
         return model_or_survival_function.median_survival_time_
@@ -871,6 +871,7 @@ def _additive_estimate(events, timeline, _additive_f, _additive_var, reverse):
     Called to compute the Kaplan Meier and Nelson-Aalen estimates.
 
     """
+
     if reverse:
         events = events.sort_index(ascending=False)
         at_risk = events["entrance"].sum() - events["removed"].cumsum().shift(1).fillna(0)
@@ -882,20 +883,23 @@ def _additive_estimate(events, timeline, _additive_f, _additive_var, reverse):
     else:
         deaths = events["observed"]
 
-        # Why subtract entrants like this? see https://github.com/CamDavidsonPilon/lifelines/issues/497
-        # specifically, we kill people, compute the ratio, and then "add" the entrants. This means that
-        # the population should not have the late entrants. The only exception to this rule
-        # is the first period, where entrants happen _prior_ to deaths.
         entrances = events["entrance"].copy()
         entrances.iloc[0] = 0
+        # Why subtract entrants like this? see https://github.com/CamDavidsonPilon/lifelines/issues/497
+        # specifically, we kill people, compute the ratio, and then "add" the entrants.
+        # This can cause a problem if there are late entrants that enter but population=0, as
+        # then we have log(0 - 0). We later ffill to fix this.
+        # The only exception to this rule is the first period, where entrants happen _prior_ to deaths.
         population = events["at_risk"] - entrances
 
         estimate_ = np.cumsum(_additive_f(population, deaths))
         var_ = np.cumsum(_additive_var(population, deaths))
 
     timeline = sorted(timeline)
-    estimate_ = estimate_.reindex(timeline, method="pad").fillna(0)
-    var_ = var_.reindex(timeline, method="pad")
+    # we forward fill because there are situations where there are NaNs caused by lack of a population.
+    # see issue #
+    estimate_ = estimate_.reindex(timeline, method="pad").ffill()
+    var_ = var_.reindex(timeline, method="pad").ffill()
     var_.index.name = "timeline"
     estimate_.index.name = "timeline"
 
@@ -918,7 +922,7 @@ def _preprocess_inputs(durations, event_observed, timeline, entry, weights):
     if event_observed is None:
         event_observed = np.ones(n, dtype=int)
     else:
-        event_observed = np.asarray(event_observed).reshape((n,)).copy().astype(int)
+        event_observed = np.asarray(event_observed).reshape((n,)).astype(int)
 
     if entry is not None:
         entry = np.asarray(entry).reshape((n,))
@@ -1815,3 +1819,9 @@ def find_best_parametric_model(
             continue
 
     return best_model, best_score
+
+
+def safe_log2(p):
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", r"divide by zero encountered in log2")
+        return np.log2(p)
