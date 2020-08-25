@@ -4,12 +4,12 @@
 import numpy as np
 import pandas as pd
 
-from lifelines.fitters import UnivariateFitter
+from lifelines.fitters import NonParametricUnivariateFitter
 from lifelines import NelsonAalenFitter
 from lifelines.utils import _to_1d_array, coalesce, CensoringType
 
 
-class BreslowFlemingHarringtonFitter(UnivariateFitter):
+class BreslowFlemingHarringtonFitter(NonParametricUnivariateFitter):
 
     """
     Class for fitting the Breslow-Fleming-Harrington estimate for the survival function. This estimator
@@ -80,7 +80,6 @@ class BreslowFlemingHarringtonFitter(UnivariateFitter):
         # estimation methods
         self._estimation_method = "survival_function_"
         self._estimate_name = "survival_function_"
-        self._update_docstrings()
 
         # plotting functions
         self.plot_survival_function = self.plot

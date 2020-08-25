@@ -9,11 +9,12 @@ from pandas.testing import assert_frame_equal, assert_series_equal
 import numpy.testing as npt
 from numpy.linalg import norm, lstsq
 from numpy.random import randn
+from flaky import flaky
 
 from lifelines import CoxPHFitter, WeibullAFTFitter, KaplanMeierFitter, ExponentialFitter
 from lifelines.datasets import load_regression_dataset, load_larynx, load_waltons, load_rossi
 from lifelines import utils
-from lifelines import metrics
+from lifelines import exceptions
 from lifelines.utils.sklearn_adapter import sklearn_adapter
 from lifelines.utils.safe_exp import safe_exp
 
@@ -72,40 +73,6 @@ def test_lstsq_returns_correct_values():
     assert norm(beta - expected_beta) < 10e-4
     for V_row, e_v_row in zip(V, expected_v):
         assert norm(V_row - e_v_row) < 1e-4
-
-
-def test_l1_log_loss_with_no_observed():
-    actual = np.array([1, 1, 1])
-    predicted = np.array([1, 1, 1])
-    assert metrics.uncensored_l1_log_loss(actual, predicted) == 0.0
-    predicted = predicted + 1
-    assert metrics.uncensored_l1_log_loss(actual, predicted) == np.log(2)
-
-
-def test_l1_log_loss_with_observed():
-    E = np.array([0, 1, 1])
-    actual = np.array([1, 1, 1])
-    predicted = np.array([1, 1, 1])
-    assert metrics.uncensored_l1_log_loss(actual, predicted, E) == 0.0
-    predicted = np.array([2, 1, 1])
-    assert metrics.uncensored_l1_log_loss(actual, predicted, E) == 0.0
-
-
-def test_l2_log_loss_with_no_observed():
-    actual = np.array([1, 1, 1])
-    predicted = np.array([1, 1, 1])
-    assert metrics.uncensored_l2_log_loss(actual, predicted) == 0.0
-    predicted = predicted + 1
-    assert abs(metrics.uncensored_l2_log_loss(actual, predicted) - np.log(2) ** 2) < 10e-8
-
-
-def test_l2_log_loss_with_observed():
-    E = np.array([0, 1, 1])
-    actual = np.array([1, 1, 1])
-    predicted = np.array([1, 1, 1])
-    assert metrics.uncensored_l2_log_loss(actual, predicted, E) == 0.0
-    predicted = np.array([2, 1, 1])
-    assert metrics.uncensored_l2_log_loss(actual, predicted, E) == 0.0
 
 
 def test_unnormalize():
@@ -292,6 +259,13 @@ def test_group_survival_table_from_events_on_waltons_data():
     assert all(removed.index == censored.index)
 
 
+def test_survival_table_from_events_binned_with_empty_bin():
+    df = load_waltons()
+    ix = df["group"] == "miR-137"
+    event_table = utils.survival_table_from_events(df.loc[ix]["T"], df.loc[ix]["E"], intervals=[0, 10, 20, 30, 40, 50])
+    assert not pd.isnull(event_table).any().any()
+
+
 def test_survival_table_from_events_at_risk_column():
     df = load_waltons()
     # from R
@@ -350,7 +324,7 @@ def test_survival_table_from_events_will_collapse_if_asked():
     T, C = np.array([1, 3, 4, 5]), np.array([True, True, True, True])
     table = utils.survival_table_from_events(T, C, collapse=True)
     assert table.index.tolist() == [
-        pd.Interval(0, 3.5089999999999999, closed="right"),
+        pd.Interval(-0.001, 3.5089999999999999, closed="right"),
         pd.Interval(3.5089999999999999, 7.0179999999999998, closed="right"),
     ]
 
@@ -358,7 +332,7 @@ def test_survival_table_from_events_will_collapse_if_asked():
 def test_survival_table_from_events_will_collapse_to_desired_bins():
     T, C = np.array([1, 3, 4, 5]), np.array([True, True, True, True])
     table = utils.survival_table_from_events(T, C, collapse=True, intervals=[0, 4, 8])
-    assert table.index.tolist() == [pd.Interval(0, 4, closed="right"), pd.Interval(4, 8, closed="right")]
+    assert table.index.tolist() == [pd.Interval(-0.001, 4, closed="right"), pd.Interval(4, 8, closed="right")]
 
 
 def test_cross_validator_returns_k_results():
@@ -932,6 +906,7 @@ class TestSklearnAdapter:
         wf.fit(X, Y)
         assert wf.predict(X).shape[0] == X.shape[0]
 
+    @pytest.mark.xfail
     def test_dill(self, X, Y):
         import dill
 
@@ -943,6 +918,7 @@ class TestSklearnAdapter:
         s = dill.loads(s)
         assert cph.predict(X).shape[0] == X.shape[0]
 
+    @pytest.mark.xfail
     def test_pickle(self, X, Y):
         import pickle
 
@@ -950,7 +926,7 @@ class TestSklearnAdapter:
         cph = base_model()
         cph.fit(X, Y)
 
-        s = pickle.dumps(cph)
+        s = pickle.dumps(cph, protocol=-1)
         s = pickle.loads(s)
         assert cph.predict(X).shape[0] == X.shape[0]
 
@@ -977,6 +953,7 @@ class TestSklearnAdapter:
         assert clf.best_params_ == {"l1_ratio": 0.5, "model_ancillary": False, "penalizer": 0.01}
         assert clf.predict(X).shape[0] == X.shape[0]
 
+    @pytest.mark.xfail
     def test_joblib(self, X, Y):
         from joblib import dump, load
 
@@ -1018,13 +995,13 @@ def test_rmst_exactely_with_known_solution():
     assert abs(utils.restricted_mean_survival_time(exp, t=lambda_) - lambda_ * (np.e - 1) / np.e) < 0.001
 
 
+@flaky
 def test_rmst_approximate_solution():
-
-    T = np.random.exponential(2, 1000)
+    T = np.random.exponential(2, 5000)
     exp = ExponentialFitter().fit(T)
     lambda_ = exp.lambda_
 
-    with pytest.warns(utils.ApproximationWarning) as w:
+    with pytest.warns(exceptions.ApproximationWarning) as w:
 
         assert (
             abs(

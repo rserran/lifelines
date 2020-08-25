@@ -1,15 +1,16 @@
 # -*- coding: utf-8 -*-
 
 import warnings
-from typing import Union
+from typing import Union, Optional, Iterable
 
-import numpy as np
-from scipy import stats
-from matplotlib import pyplot as plt
 from matplotlib.ticker import MaxNLocator
+from matplotlib import pyplot as plt
+import matplotlib as mpl
+from scipy import stats
 import pandas as pd
+import numpy as np
 
-from lifelines.utils import coalesce, CensoringType
+from lifelines.utils import coalesce, CensoringType, _group_event_table_by_intervals
 
 
 __all__ = [
@@ -73,7 +74,13 @@ def create_scipy_stats_model_from_lifelines_model(model):
 
 def cdf_plot(model, timeline=None, ax=None, **plot_kwargs):
     """
+    This plot compares the empirical CDF (derived by KaplanMeier) vs the model CDF.
 
+    Parameters
+    ------------
+    model: lifelines univariate model
+    timeline: iterable
+    ax: matplotlib axis
 
     """
     from lifelines import KaplanMeierFitter
@@ -356,18 +363,23 @@ def remove_ticks(ax, x=False, y=False):
     return ax
 
 
-def add_at_risk_counts(*fitters, ax=None, **kwargs):
+def add_at_risk_counts(*fitters, labels: Optional[Union[Iterable, bool]] = None, rows_to_show=None, ax=None, **kwargs):
     """
-    Add counts showing how many individuals were at risk at each time point in
+    Add counts showing how many individuals were at risk, censored, and observed, at each time point in
     survival/hazard plots.
 
     Parameters
     ----------
     fitters:
-      One or several fitters, for example KaplanMeierFitter,
+      One or several fitters, for example KaplanMeierFitter, WeibullFitter,
       NelsonAalenFitter, etc...
     ax:
         a matplotlib axes
+    labels:
+        provide labels for the fitters, default is to use the provided fitter label. Set to
+        False for no labels.
+    rows_to_show: list
+        list of a subset of {'At risk', 'Censored', 'Events'}. Default shows all columns.
 
     Returns
     --------
@@ -398,9 +410,14 @@ def add_at_risk_counts(*fitters, ax=None, **kwargs):
         add_at_risk_counts(f1, f2, labels=['fitter one', 'fitter two'])
 
         # This hides the labels
-        add_at_risk_counts(f1, f2, labels=None)
+        add_at_risk_counts(f1, f2, labels=False)
+
+    References
+    -----------
+     Morris TP, Jarvis CI, Cragg W, et al. Proposals on Kaplan–Meier plots in medical research and a survey of stakeholder views: KMunicate. BMJ Open 2019;9:e030215. doi:10.1136/bmjopen-2019-030215
+
     """
-    # Axes and Figure can't be None
+
     if ax is None:
         ax = plt.gca()
 
@@ -408,22 +425,21 @@ def add_at_risk_counts(*fitters, ax=None, **kwargs):
     if fig is None:
         fig = plt.gcf()
 
-    if "labels" not in kwargs:
+    if labels is None:
         labels = [f._label for f in fitters]
-    else:
-        # Allow None, in which case no labels should be used
-        labels = kwargs.pop("labels", None)
-        if labels is None:
-            labels = [None] * len(fitters)
+    elif labels is False:
+        labels = [None] * len(fitters)
 
-    # remove xlabel
-    ax.set_xlabel("")
+    if rows_to_show is None:
+        rows_to_show = ["At risk", "Censored", "Events"]
+    n_rows = len(rows_to_show)
+
     # Create another axes where we can put size ticks
     ax2 = plt.twiny(ax=ax)
     # Move the ticks below existing axes
     # Appropriate length scaled for 6 inches. Adjust for figure size.
     ax_height = (ax.get_position().y1 - ax.get_position().y0) * fig.get_figheight()  # axis height
-    ax2_ypos = -0.1 * 6.0 / ax_height
+    ax2_ypos = -0.1 * 3.0 / ax_height
     move_spines(ax2, ["bottom"], [ax2_ypos])
     # Hide all fluff
     remove_spines(ax2, ["top", "right", "bottom", "left"])
@@ -439,32 +455,55 @@ def add_at_risk_counts(*fitters, ax=None, **kwargs):
     ax2.set_xticks(xticks)
     # Remove ticks, need to do this AFTER moving the ticks
     remove_ticks(ax2, x=True, y=True)
-    # Add population size at times
+
     ticklabels = []
+
     for tick in ax2.get_xticks():
         lbl = ""
+
         # Get counts at tick
-        counts = [f.durations[f.durations >= tick].shape[0] for f in fitters]
-        # Create tick label
-        for l, c in zip(labels, counts):
-            # First tick is prepended with the label
-            if tick == ax2.get_xticks()[0] and l is not None:
-                # Get length of largest count
-                max_length = len(str(max(counts)))
-                if is_latex_enabled():
-                    s = "\n{}\\quad".format(l) + "{{:>{}d}}".format(max_length)
-                else:
-                    s = "\n{}   ".format(l) + "{{:>{}d}}".format(max_length)
-            else:
+        counts = []
+        for f in fitters:
+            # this is a messy:
+            # a) to align with R (and intuition), we do a subtraction off the at_risk column
+            # b) we group by the tick intervals
+            # c) we want to start at 0, so we give it it's own interval
+
+            event_table_slice = (
+                f.event_table.assign(at_risk=lambda x: x.at_risk - x.removed)
+                .loc[:tick, ["at_risk", "censored", "observed"]]
+                .agg({"at_risk": "min", "censored": "sum", "observed": "sum"})
+                .rename({"at_risk": "At risk", "censored": "Censored", "observed": "Events"})
+            )
+            counts.extend([int(c) for c in event_table_slice.loc[rows_to_show]])
+
+        if tick == ax2.get_xticks()[0]:
+            max_length = len(str(max(counts)))
+            for i, c in enumerate(counts):
+                if i % n_rows == 0:
+                    if is_latex_enabled():
+                        lbl += ("\n" if i > 0 else "") + r"\textbf{%s}" % labels[int(i / n_rows)] + "\n"
+                    else:
+                        lbl += ("\n" if i > 0 else "") + r"%s" % labels[int(i / n_rows)] + "\n"
+
+                l = rows_to_show[i % n_rows]
+                l = {"At risk": "  At risk", "Censored": "Censored  ", "Events": " Events  "}.get(l)
+                s = "{}   ".format(l.rjust(10, " ")) + "{{:>{}d}}\n".format(max_length)
+                lbl += s.format(c)
+
+        else:
+            # Create tick label
+            lbl += ""
+            for i, c in enumerate(counts):
+                if i % n_rows == 0 and i > 0:
+                    lbl += "\n\n"
                 s = "\n{}"
-            lbl += s.format(c)
-        ticklabels.append(lbl.strip())
+                lbl += s.format(c)
+
+        ticklabels.append(lbl)
+
     # Align labels to the right so numbers can be compared easily
     ax2.set_xticklabels(ticklabels, ha="right", **kwargs)
-
-    # Add a descriptive headline.
-    ax2.xaxis.set_label_coords(0, ax2_ypos)
-    ax2.set_xlabel("At risk")
 
     plt.tight_layout()
     return ax
@@ -525,8 +564,8 @@ def plot_interval_censored_lifetimes(
     label_plot_bars = type(lower_bound) is pd.Series and type(lower_bound.index) is not pd.RangeIndex
 
     N = lower_bound.shape[0]
-    if N > 80:
-        warnings.warn("For less visual clutter, you may want to subsample to less than 80 individuals.")
+    if N > 25:
+        warnings.warn("For less visual clutter, you may want to subsample to less than 25 individuals.")
 
     assert upper_bound.shape[0] == N
 
@@ -620,8 +659,8 @@ def plot_lifetimes(
     label_plot_bars = type(durations) is pd.Series and type(durations.index) is not pd.RangeIndex
 
     N = durations.shape[0]
-    if N > 80:
-        warnings.warn("For less visual clutter, you may want to subsample to less than 80 individuals.")
+    if N > 25:
+        warnings.warn("For less visual clutter, you may want to subsample to less than 25 individuals.")
 
     if event_observed is None:
         event_observed = np.ones(N, dtype=bool)

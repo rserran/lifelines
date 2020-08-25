@@ -3,17 +3,16 @@ import warnings
 import numpy as np
 import pandas as pd
 
-from lifelines.fitters import UnivariateFitter
+from lifelines.fitters import NonParametricUnivariateFitter
+from lifelines.exceptions import StatError, StatisticalWarning
 from lifelines.utils import (
     _preprocess_inputs,
     _additive_estimate,
     _to_1d_array,
-    StatError,
     inv_normal_cdf,
     median_survival_times,
     qth_survival_time,
     check_nans_or_infs,
-    StatisticalWarning,
     coalesce,
     CensoringType,
     pass_for_numeric_dtypes_or_raise_array,
@@ -23,7 +22,7 @@ from lifelines.plotting import loglogs_plot, _plot_estimate
 from lifelines.fitters.npmle import npmle, reconstruct_survival_function, npmle_compute_confidence_intervals
 
 
-class KaplanMeierFitter(UnivariateFitter):
+class KaplanMeierFitter(NonParametricUnivariateFitter):
 
     """
     Class for fitting the Kaplan-Meier estimate for the survival function.
@@ -220,7 +219,6 @@ class KaplanMeierFitter(UnivariateFitter):
         # estimation methods
         self._estimation_method = "survival_function_"
         self._estimate_name = "survival_function_"
-        self._update_docstrings()
         return self
 
     @CensoringType.left_censoring
@@ -348,7 +346,7 @@ class KaplanMeierFitter(UnivariateFitter):
         setattr(self, secondary_estimate_name, pd.DataFrame(1 - np.exp(log_estimate), columns=[self._label]))
 
         self.__estimate = getattr(self, primary_estimate_name)
-        self.confidence_interval_ = self._bounds(cumulative_sq_[:, None], alpha, ci_labels)
+        self.confidence_interval_ = self._bounds(cumulative_sq_.values[:, None], alpha, ci_labels)
         self._median = median_survival_times(self.survival_function_)
         self._cumulative_sq_ = cumulative_sq_
 
@@ -358,7 +356,6 @@ class KaplanMeierFitter(UnivariateFitter):
         # estimation methods
         self._estimation_method = primary_estimate_name
         self._estimate_name = primary_estimate_name
-        self._update_docstrings()
 
         return self
 
@@ -416,7 +413,13 @@ class KaplanMeierFitter(UnivariateFitter):
             return _plot_estimate(self, estimate="survival_function_", **kwargs)
         else:
             # hack for now.
-            color = coalesce(kwargs.get("c"), kwargs.get("color"), "k")
+            def safe_pop(dict, key):
+                if key in dict:
+                    return dict.pop(key)
+                else:
+                    return None
+
+            color = coalesce(safe_pop(kwargs, "c"), safe_pop(kwargs, "color"), "k")
             self.survival_function_.plot(drawstyle="steps-pre", color=color, **kwargs)
 
     def plot_cumulative_density(self, **kwargs):

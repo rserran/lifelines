@@ -11,7 +11,7 @@ class SplineFitter(KnownModelParametricUnivariateFitter, SplineFitterMixin):
     r"""
     Model the cumulative hazard using :math:`N` cubic splines. This offers great flexibility and smoothness of the cumulative hazard.
 
-    .. math:: H(t) = \exp{\left( \phi_0 + \phi_1\log{t} + \sum_{j=2}^N \phi_j v_j\(\log{t})\right)}
+    .. math:: H(t) = \exp{\left( \phi_0 + \phi_1\log{t} + \sum_{j=2}^N \phi_j v_j(\log{t})\right)}
 
     where :math:`v_j` are our cubic basis functions at predetermined knots. See references for exact definition.
 
@@ -52,10 +52,9 @@ class SplineFitter(KnownModelParametricUnivariateFitter, SplineFitterMixin):
         The estimated survival function (with custom timeline if provided)
     cumulative_density_ : DataFrame
         The estimated cumulative density function (with custom timeline if provided)
-    density: DataFrame
+    density_: DataFrame
         The estimated density function (PDF) (with custom timeline if provided)
-
-    variance_matrix_ : numpy array
+    variance_matrix_ : DataFrame
         The variance matrix of the coefficients
     median_survival_time_: float
         The median time to event
@@ -71,8 +70,10 @@ class SplineFitter(KnownModelParametricUnivariateFitter, SplineFitterMixin):
         The time line to use for plotting and indexing
     entry: array or None
         The entry array provided, or None
-    knot_locations:
-        The locations of the cubic breakpoints.
+    knot_locations: array
+        The locations of the breakpoints.
+    n_knots: int
+        Count of breakpoints
 
     """
     _scipy_fit_method = "SLSQP"
@@ -84,6 +85,7 @@ class SplineFitter(KnownModelParametricUnivariateFitter, SplineFitterMixin):
         assert self.n_knots > 1, "knot_locations must have two or more elements."
         self._fitted_parameter_names = ["phi_%d_" % i for i in range(self.n_knots)]
         self._bounds = [(None, None)] * (self.n_knots)
+        self._compare_to_values = np.zeros(self.n_knots)
         super(SplineFitter, self).__init__(*args, **kwargs)
 
     def _create_initial_point(self, Ts, E, entry, weights):

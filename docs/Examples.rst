@@ -12,7 +12,7 @@ This section goes through some examples and recipes to help you use *lifelines*.
 Worked Examples
 ####################
 
-If you are looking for some full examples of *lifelines*, `there are full Jupyter notebooks and scripts here <https://github.com/CamDavidsonPilon/lifelines/tree/master/examples>`_ and `examples and ideas on the development blog <https://dataorigami.net/blogs/napkin-folding/tagged/lifelines>`_.
+If you are looking for some full examples of *lifelines*, there are `full Jupyter notebooks and scripts here <https://github.com/CamDavidsonPilon/lifelines/tree/master/examples>`_ and examples and ideas on the `development blog <https://dataorigami.net/blogs/napkin-folding/tagged/lifelines>`_.
 
 
 Statistically compare two populations
@@ -162,36 +162,12 @@ the log(-log) transformation implicitly and compares the survival-ness of popula
     T_exp, E_exp = df.loc[ix, 'T'], df.loc[ix, 'E']
     T_con, E_con = df.loc[~ix, 'T'], df.loc[~ix, 'E']
 
+    kmf_exp = KaplanMeierFitter(label="exp").fit(T_exp, E_exp)
+    kmf_con = KaplanMeierFitter(label="con").fit(T_con, E_con)
+
     point_in_time = 10.
-    results = survival_difference_at_fixed_point_in_time_test(point_in_time, T_exp, T_con, event_observed_A=E_exp, event_observed_B=E_con)
+    results = survival_difference_at_fixed_point_in_time_test(point_in_time, kmf_exp, kmf_con)
     results.print_summary()
-
-
-Subtraction and division between survival functions
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-If you are interested in taking the difference between two survival functions, simply trying to
-subtract the ``survival_function_`` will likely fail if the DataFrame's indexes are not equal. Fortunately,
-the :class:`~lifelines.fitters.kaplan_meier_fitter.KaplanMeierFitter` and :class:`~lifelines.fitters.nelson_aalen_fitter.NelsonAalenFitter` have a built-in ``subtract`` method:
-
-.. code-block:: python
-
-    from lifelines.datasets import load_waltons
-    from lifelines import KaplanMeierFitter
-
-
-    df = load_waltons()
-    ix = df['group'] == 'miR-137'
-    T_exp, E_exp = df.loc[ix, 'T'], df.loc[ix, 'E']
-    T_con, E_con = df.loc[~ix, 'T'], df.loc[~ix, 'E']
-
-    kmf1 = KaplanMeierFitter().fit(T_exp, E_exp, label="exp")
-    kmf2 = KaplanMeierFitter().fit(T_con, E_con, label="con")
-
-
-    kmf1.subtract(kmf2)
-
-will produce the difference at every relevant time point. A similar function exists for division: ``divide``. However, for rigorous testing of differences, *lifelines* comes with a statistics library. See below.
 
 
 Restricted mean survival times (RMST)
@@ -202,7 +178,7 @@ Restricted mean survival times (RMST)
     .. math::  \text{RMST}(t) = \int_0^t S(\tau) d\tau
 
 
-This is a good metric for comparing two survival curves, as their difference represents the area between the curves (see figure below). The upper limit is often finite because the tail of the estimated survival curve has high variance and can strongly influence the integral.
+This is a good metric for comparing two survival curves, as their difference represents the area between the curves (see figure below) which is a measure of "time lost". The upper limit of the integral above is often finite because the tail of the estimated survival curve has high variance and can strongly influence the integral.
 
 .. code-block:: python
 
@@ -312,13 +288,16 @@ Selecting a parametric model using AIC
 ###############################################
 
 
-For univariate models (later to be extended to regression models), a natural way to compare different models is the AIC:
+A natural way to compare different models is the AIC:
 
 .. math::  \text{AIC}(\text{model}) = -2 \text{ll} + 2k
 
 where :math:`k` is the number of parameters (degrees-of-freedom) of the model and :math:`\text{ll}` is the maximum log-likelihood. The model with the lowest AIC is desirable, since it's a trade off between maximizing the log-likelihood with as few parameters as possible.
 
-*lifelines* has a built in function to automate AIC comparisons between univariate parametric models:
+All lifelines models have the `AIC_` property after fitting.
+
+
+Further more, *lifelines* has a built in function to automate AIC comparisons between univariate parametric models:
 
 .. code:: python
 
@@ -328,7 +307,7 @@ where :math:`k` is the number of parameters (degrees-of-freedom) of the model an
     T = load_lymph_node()['rectime']
     E = load_lymph_node()['censrec']
 
-    best_model, best_aic_ = find_best_parametric_model(T, E)
+    best_model, best_aic_ = find_best_parametric_model(T, E, scoring_method="AIC")
 
     print(best_model)
     # <lifelines.SplineFitter:"Spline_estimate", fitted with 686 total observations, 387 right-censored observations>
@@ -460,7 +439,7 @@ Displaying at-risk counts below plots
 Displaying multiple at-risk counts below plots
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-The function :func:`lifelines.plotting.add_at_risk_counts` allows you to add At-Risk counts at the bottom of your figures. For example:
+The function :func:`lifelines.plotting.add_at_risk_counts` allows you to add counts at the bottom of your figures. For example:
 
 .. code-block:: python
 
@@ -1007,3 +986,67 @@ New in version 0.23.1, *lifelines* models now have the ability to output a LaTeX
 
 
 In order to use the produced table summary in LaTeX, make sure you import the package ``booktabs`` in your preamble (``\usepackage{booktabs}``), since it is required to `display the table properly. <https://en.wikibooks.org/wiki/LaTeX/Tables#Using_booktabs>`_
+
+
+Filter a ``print_summary`` table
+##########################################
+
+The information provided by ``print_summary`` can be a lot, and even too much for some screens. You can filter to specific columns use the ``columns`` kwarg (default is to display all columns):
+
+.. code-block:: python
+
+    from lifelines.datasets import load_rossi
+    from lifelines import CoxPHFitter
+
+    rossi = load_rossi()
+
+    cph = CoxPHFitter().fit(rossi, 'week', 'arrest')
+
+    cph.print_summary(columns=["coef", "se(coef)", "p"])
+
+
+
+Fixing a ``FormulaSyntaxError``
+##############################################
+
+As a of *lifelines* v0.25.0, formulas can be used to model your dataframe. This may cause problems if your dataframe has column names with spaces, periods, or other characters. The cheapest way to fix this is to change your column names:
+
+
+.. code-block:: python
+
+    df = pd.DataFrame({
+        'T': [1, 2, 3, 4],
+        'column with spaces': [1.5, 1.0, 2.5, 1.0],
+        'column.with.periods': [2.5, -1.0, -2.5, 1.0],
+        'column': [2.0, 1.0, 3.0, 4.0]
+    })
+
+    cph = CoxPHFitter().fit(df, 'T')
+
+    """
+    FormulaSyntaxError:
+        ...
+    """
+
+    df.columns = df.columns.str.replace(' ', '')
+    df.columns = df.columns.str.replace('.', '')
+    cph = CoxPHFitter().fit(df, 'T')
+
+    """
+    👍
+    """
+
+
+Another option is to use the formula syntax to handle this:
+
+
+.. code-block:: python
+
+    df = pd.DataFrame({
+        'T': [1, 2, 3, 4],
+        'column with spaces': [1.5, 1.0, 2.5, 1.0],
+        'column.with.periods': [2.5, -1.0, -2.5, 1.0],
+        'column': [2.0, 1.0, 3.0, 4.0]
+    })
+
+    cph = CoxPHFitter().fit(df, 'T', formula="column + Q('column with spaces') + Q('column.with.periods')")

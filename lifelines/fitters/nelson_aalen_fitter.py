@@ -1,19 +1,17 @@
 # -*- coding: utf-8 -*-
-
-
 import warnings
 import numpy as np
 import pandas as pd
 
 from lifelines.fitters import UnivariateFitter
 from lifelines.plotting import _plot_estimate
+from lifelines.exceptions import StatisticalWarning
 from lifelines.utils import (
     _preprocess_inputs,
     _additive_estimate,
     epanechnikov_kernel,
     inv_normal_cdf,
     check_nans_or_infs,
-    StatisticalWarning,
     CensoringType,
     coalesce,
 )
@@ -133,14 +131,13 @@ class NelsonAalenFitter(UnivariateFitter):
         # estimates
         self._label = coalesce(label, self._label, "NA_estimate")
         self.cumulative_hazard_ = pd.DataFrame(cumulative_hazard_, columns=[self._label])
-        self.confidence_interval_ = self._bounds(cumulative_sq_[:, None], alpha if alpha else self.alpha, ci_labels)
+        self.confidence_interval_ = self._bounds(cumulative_sq_.values[:, None], alpha if alpha else self.alpha, ci_labels)
         self.confidence_interval_cumulative_hazard_ = self.confidence_interval_
         self._cumulative_sq = cumulative_sq_
 
         # estimation methods
         self._estimation_method = "cumulative_hazard_"
         self._estimate_name = "cumulative_hazard_"
-        self._update_docstrings()
 
         # plotting
         self.plot_cumulative_hazard = self.plot
@@ -243,7 +240,7 @@ class NelsonAalenFitter(UnivariateFitter):
 
     @property
     def conditional_time_to_event_(self):
-        raise NotImplementedError
+        raise NotImplementedError()
 
     def percentile(self, p):
         raise NotImplementedError()
