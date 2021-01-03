@@ -1,5 +1,51 @@
 ## Changelog
 
+#### 0.25.7 - 2020-12-09
+
+##### API Changes
+ - Adding `cumulative_hazard_at_times` to NelsonAalenFitter
+
+
+##### Bug fixes
+ - Fixed error in `CoxPHFitter` when entry time == event time.
+ - Fixed formulas in AFT interval censoring regression.
+ - Fixed `concordance_index_` when no events observed
+ - Fixed label being overwritten in ParametricUnivariate models
+
+
+#### 0.25.6 - 2020-10-26
+
+##### New features
+ - Parametric Cox models can now handle left and interval censoring datasets.
+
+##### Bug fixes
+ - "improved" the output of `add_at_risk_counts` by removing a call to `plt.tight_layout()` - this works better when you are calling `add_at_risk_counts` on multiple axes, but it is recommended you call `plt.tight_layout()` at the very end of your script.
+ - Fix bug in `KaplanMeierFitter`'s interval censoring where max(lower bound) < min(upper bound).
+
+
+#### 0.25.5 - 2020-09-23
+
+##### API Changes
+ - `check_assumptions` now returns a list of list of axes that can be manipulated
+
+##### Bug fixes
+ - fixed error when using `plot_partial_effects` with categorical data in AFT models
+ - improved warning when Hessian matrix contains NaNs.
+ - fixed performance regression in interval censoring fitting in parametric models
+ - `weights` wasn't being applied properly in NPMLE
+
+#### 0.25.4 - 2020-08-26
+
+##### New features
+ - New baseline estimator for Cox models: ``piecewise``
+ - Performance improvements for parametric models `log_likelihood_ratio_test()` and `print_summary()`
+ - Better step-size defaults for Cox model -> more robust convergence.
+
+
+##### Bug fixes
+ - fix `check_assumptions` when using formulas.
+
+
 #### 0.25.3 - 2020-08-24
 
 ##### New features

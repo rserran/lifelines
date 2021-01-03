@@ -14,6 +14,7 @@ from lifelines.utils import (
     check_nans_or_infs,
     CensoringType,
     coalesce,
+    _to_1d_array,
 )
 
 
@@ -57,8 +58,6 @@ class NelsonAalenFitter(UnivariateFitter):
 
     def __init__(self, alpha=0.05, nelson_aalen_smoothing=True, **kwargs):
         super(NelsonAalenFitter, self).__init__(alpha=alpha, **kwargs)
-        if not (0 < alpha <= 1.0):
-            raise ValueError("alpha parameter must be between 0 and 1.")
         self.alpha = alpha
         self.nelson_aalen_smoothing = nelson_aalen_smoothing
 
@@ -244,3 +243,19 @@ class NelsonAalenFitter(UnivariateFitter):
 
     def percentile(self, p):
         raise NotImplementedError()
+
+    def cumulative_hazard_at_times(self, times, label=None) -> pd.Series:
+        """
+        Return a Pandas series of the predicted cumhaz value at specific times
+
+        Parameters
+        -----------
+        times: iterable or float
+
+        Returns
+        --------
+        pd.Series
+
+        """
+        label = coalesce(label, self._label)
+        return pd.Series(self.predict(times), index=_to_1d_array(times), name=label)

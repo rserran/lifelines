@@ -2,11 +2,8 @@
 
 import warnings
 from typing import Union, Optional, Iterable
+from scipy import stats as stats
 
-from matplotlib.ticker import MaxNLocator
-from matplotlib import pyplot as plt
-import matplotlib as mpl
-from scipy import stats
 import pandas as pd
 import numpy as np
 
@@ -84,6 +81,7 @@ def cdf_plot(model, timeline=None, ax=None, **plot_kwargs):
 
     """
     from lifelines import KaplanMeierFitter
+    from matplotlib import pyplot as plt
 
     if ax is None:
         ax = plt.gca()
@@ -164,6 +162,7 @@ def rmst_plot(model, model2=None, t=np.inf, ax=None, text_position=None, **plot_
 
     """
     from lifelines.utils import restricted_mean_survival_time
+    from matplotlib import pyplot as plt
 
     if ax is None:
         ax = plt.gca()
@@ -256,6 +255,7 @@ def qq_plot(model, ax=None, **plot_kwargs):
     """
     from lifelines.utils import qth_survival_times
     from lifelines import KaplanMeierFitter
+    from matplotlib import pyplot as plt
 
     if ax is None:
         ax = plt.gca()
@@ -363,10 +363,12 @@ def remove_ticks(ax, x=False, y=False):
     return ax
 
 
-def add_at_risk_counts(*fitters, labels: Optional[Union[Iterable, bool]] = None, rows_to_show=None, ax=None, **kwargs):
+def add_at_risk_counts(*fitters, labels: Optional[Union[Iterable, bool]] = None, rows_to_show=None, ypos=-0.6, ax=None, **kwargs):
     """
     Add counts showing how many individuals were at risk, censored, and observed, at each time point in
     survival/hazard plots.
+
+    Tip: you may want to call ``plt.tight_layout()`` afterwards.
 
     Parameters
     ----------
@@ -380,6 +382,8 @@ def add_at_risk_counts(*fitters, labels: Optional[Union[Iterable, bool]] = None,
         False for no labels.
     rows_to_show: list
         list of a subset of {'At risk', 'Censored', 'Events'}. Default shows all columns.
+    ypos:
+        increase to move the table down further.
 
     Returns
     --------
@@ -417,6 +421,7 @@ def add_at_risk_counts(*fitters, labels: Optional[Union[Iterable, bool]] = None,
      Morris TP, Jarvis CI, Cragg W, et al. Proposals on Kaplan–Meier plots in medical research and a survey of stakeholder views: KMunicate. BMJ Open 2019;9:e030215. doi:10.1136/bmjopen-2019-030215
 
     """
+    from matplotlib import pyplot as plt
 
     if ax is None:
         ax = plt.gca()
@@ -439,7 +444,8 @@ def add_at_risk_counts(*fitters, labels: Optional[Union[Iterable, bool]] = None,
     # Move the ticks below existing axes
     # Appropriate length scaled for 6 inches. Adjust for figure size.
     ax_height = (ax.get_position().y1 - ax.get_position().y0) * fig.get_figheight()  # axis height
-    ax2_ypos = -0.1 * 3.0 / ax_height
+    ax2_ypos = ypos / ax_height
+
     move_spines(ax2, ["bottom"], [ax2_ypos])
     # Hide all fluff
     remove_spines(ax2, ["top", "right", "bottom", "left"])
@@ -505,7 +511,6 @@ def add_at_risk_counts(*fitters, labels: Optional[Union[Iterable, bool]] = None,
     # Align labels to the right so numbers can be compared easily
     ax2.set_xticklabels(ticklabels, ha="right", **kwargs)
 
-    plt.tight_layout()
     return ax
 
 
@@ -556,6 +561,7 @@ def plot_interval_censored_lifetimes(
         df = pd.DataFrame({'lb':[20,15,30, 10, 20, 30], 'ub':[25, 15, np.infty, 20, 20, np.infty]})
         ax = plot_interval_censored_lifetimes(lower_bound=df['lb'], upper_bound=df['ub'])
     """
+    from matplotlib import pyplot as plt
 
     if ax is None:
         ax = plt.gca()
@@ -599,6 +605,8 @@ def plot_interval_censored_lifetimes(
         ax.set_yticks(range(0, N))
         ax.set_yticklabels(lower_bound.index)
     else:
+        from matplotlib.ticker import MaxNLocator
+
         ax.yaxis.set_major_locator(MaxNLocator(integer=True))
 
     ax.set_xlim(0)
@@ -651,6 +659,7 @@ def plot_lifetimes(
         ax = plot_lifetimes(T.loc[:50], event_observed=E.loc[:50])
 
     """
+    from matplotlib import pyplot as plt
 
     if ax is None:
         ax = plt.gca()
@@ -690,6 +699,8 @@ def plot_lifetimes(
         ax.set_yticks(range(0, N))
         ax.set_yticklabels(durations.index)
     else:
+        from matplotlib.ticker import MaxNLocator
+
         ax.yaxis.set_major_locator(MaxNLocator(integer=True))
 
     ax.set_xlim(0)
@@ -724,6 +735,7 @@ def loglogs_plot(cls, loc=None, iloc=None, show_censors=False, censor_styles=Non
     """
     Specifies a plot of the log(-log(SV)) versus log(time) where SV is the estimated survival function.
     """
+    from matplotlib import pyplot as plt
 
     def loglog(s):
         return np.log(-np.log(s))
@@ -829,6 +841,8 @@ def _plot_estimate(
     ax:
         a pyplot axis object
     """
+    from matplotlib import pyplot as plt
+
     if ci_force_lines:
         warnings.warn(
             "ci_force_lines is deprecated. Use ci_only_lines instead (no functional difference, only a name change).",
@@ -892,12 +906,14 @@ def _plot_estimate(
 
     if at_risk_counts:
         add_at_risk_counts(cls, ax=plot_estimate_config.ax)
+        plt.tight_layout()
 
     return plot_estimate_config.ax
 
 
 class PlotEstimateConfig:
     def __init__(self, cls, estimate: Union[str, pd.DataFrame], loc, iloc, show_censors, censor_styles, logx, ax, **kwargs):
+        from matplotlib import pyplot as plt
 
         self.censor_styles = coalesce(censor_styles, {})
 

@@ -131,6 +131,10 @@ class UnivariateFitter(BaseFitter):
         ax:
             a pyplot axis object
         """
+        warnings.warn(
+            "The `plot` function is deprecated, and will be removed in future versions. Use `plot_%s`" % self._estimate_name,
+            DeprecationWarning,
+        )
         return _plot_estimate(self, estimate=self._estimate_name, **kwargs)
 
     def subtract(self, other) -> pd.DataFrame:
@@ -430,11 +434,15 @@ class ParametricUnivariateFitter(UnivariateFitter):
         # this diff can be 0 - we can't take the log of that.
         ll = (
             ll
-            + np.clip(
+            + (
                 censored_weights
-                * anp.log(self._survival_function(params, censored_starts) - self._survival_function(params, censored_stops)),
-                -1e50,
-                1e50,
+                * anp.log(
+                    anp.clip(
+                        self._survival_function(params, censored_starts) - self._survival_function(params, censored_stops),
+                        1e-25,
+                        1 - 1e-25,
+                    )
+                )
             ).sum()
         )
         ll = ll + (weights[non_zero_entries] * self._cumulative_hazard(params, entry[non_zero_entries])).sum()
@@ -912,7 +920,6 @@ class ParametricUnivariateFitter(UnivariateFitter):
         initial_point=None,
     ) -> "ParametricUnivariateFitter":
 
-        label = utils.coalesce(label, self._class_name.replace("Fitter", "") + "_estimate")
         n = len(utils.coalesce(*Ts))
 
         if event_observed is not None:
@@ -927,9 +934,9 @@ class ParametricUnivariateFitter(UnivariateFitter):
         if timeline is not None:
             self.timeline = np.sort(np.asarray(timeline).astype(float))
         else:
-            self.timeline = np.linspace(utils.coalesce(*Ts).min(), utils.coalesce(*Ts).max(), n)
+            self.timeline = np.linspace(utils.coalesce(*Ts).min(), utils.coalesce(*Ts).max(), min(n, 500))
 
-        self._label = utils.coalesce(label, self._label)
+        self._label = utils.coalesce(label, self._label, self._class_name.replace("Fitter", "") + "_estimate")
         self._ci_labels = ci_labels
         self.alpha = utils.coalesce(alpha, self.alpha)
 
@@ -955,6 +962,7 @@ class ParametricUnivariateFitter(UnivariateFitter):
 
         for param_name, fitted_value in zip(self._fitted_parameter_names, self._fitted_parameters_):
             setattr(self, param_name, fitted_value)
+
         try:
             variance_matrix_ = inv(self._hessian_)
         except np.linalg.LinAlgError:
@@ -970,10 +978,10 @@ class ParametricUnivariateFitter(UnivariateFitter):
             )
             warnings.warn(warning_text, exceptions.ApproximationWarning)
         finally:
-            if (variance_matrix_.diagonal() < 0).any():
+            if (variance_matrix_.diagonal() < 0).any() or np.isnan(variance_matrix_).any():
                 warning_text = dedent(
                     """\
-                    The diagonal of the variance_matrix_ has negative values. This could be a problem with %s's fit to the data.
+                    The diagonal of the variance_matrix_ has negative values or NaNs. This could be a problem with %s's fit to the data.
 
                     It's advisable to not trust the variances reported, and to be suspicious of the fitted parameters too. Perform plots of the cumulative hazard to help understand the latter's bias.
 
@@ -1134,11 +1142,15 @@ class ParametricUnivariateFitter(UnivariateFitter):
         Produce a pretty-plot of the estimate.
         """
         set_kwargs_drawstyle(kwargs, "default")
+        warnings.warn(
+            "The `plot` function is deprecated, and will be removed in future versions. Use `plot_%s`" % self._estimate_name,
+            DeprecationWarning,
+        )
         return _plot_estimate(self, estimate=self._estimate_name, **kwargs)
 
     def plot_cumulative_hazard(self, **kwargs):
         set_kwargs_drawstyle(kwargs, "default")
-        return self.plot(**kwargs)
+        return _plot_estimate(self, estimate="cumulative_hazard_", **kwargs)
 
     def plot_survival_function(self, **kwargs):
         set_kwargs_drawstyle(kwargs, "default")
@@ -1187,10 +1199,17 @@ class ParametricUnivariateFitter(UnivariateFitter):
         def _find_root(_p):
             f = lambda t: _p - self.survival_function_at_times(t).values
             fprime = lambda t: self.survival_function_at_times(t).values * self.hazard_at_times(t).values
-            return root_scalar(f, bracket=(1e-10, self.timeline[-1]), fprime=fprime, x0=1.0).root
+            return root_scalar(f, bracket=(1e-10, 2 * self.timeline[-1]), fprime=fprime, x0=1.0).root
 
-        find_root = np.vectorize(_find_root, otypes=[float])
-        return find_root(p)
+        try:
+            find_root = np.vectorize(_find_root, otypes=[float])
+            return find_root(p)
+        except ValueError:
+            warning.warn(
+                "Looking like the model does not hit %g in the specified timeline. Try refitting with a larger timeline." % p,
+                StatisticalWarning,
+            )
+            return None
 
 
 class KnownModelParametricUnivariateFitter(ParametricUnivariateFitter):
@@ -1221,7 +1240,7 @@ class RegressionFitter(BaseFitter):
         - Numerics are transformed to their median value.
         """
         if df.size == 0:
-            return None
+            return pd.DataFrame(index=["baseline"])
 
         if strata is not None:
             # apply this function within each stratified dataframe
@@ -1238,7 +1257,13 @@ class RegressionFitter(BaseFitter):
             return v
 
         else:
-            described = df.describe(include="all")
+            from distutils.version import LooseVersion
+            if LooseVersion(pd.__version__) >= '1.1.0':
+                # silence deprecation warning
+                describe_kwarg = {'datetime_is_numeric': True}
+            else:
+                describe_kwarg = {}
+            described = df.describe(include="all", **describe_kwarg)
             if "top" in described.index and "50%" not in described.index:
                 central_stats = described.loc["top"].copy()
             elif "50%" in described.index and "top" not in described.index:
@@ -1293,6 +1318,7 @@ class ParametricRegressionFitter(RegressionFitter):
     _scipy_fit_method = "BFGS"
     _scipy_fit_options: Dict[str, Any] = dict()
     fit_intercept = False
+    force_no_intercept = False
     regressors = None
     strata = None
 
@@ -1304,6 +1330,7 @@ class ParametricRegressionFitter(RegressionFitter):
     def _check_values_post_fitting(self, df, T, E, weights, entries):
         utils.check_dimensions(df)
         utils.check_complete_separation(df, E, T, self.event_col)
+        utils.check_scaling(df)
 
     def _pre_fit_model(self, Ts, E, Xs) -> None:
         return
@@ -1391,11 +1418,10 @@ class ParametricRegressionFitter(RegressionFitter):
             anp.clip(
                 self._survival_function(params, start[~E], Xs.filter(~E))
                 - self._survival_function(params, stop[~E], Xs.filter(~E)),
-                -1e50,
-                1e50,
+                1e-25,
+                1 - 1e-25,
             )
         )
-
         delayed_entries = self._cumulative_hazard(params, entries[non_zero_entries], Xs.filter(non_zero_entries))
 
         ll = 0
@@ -1743,7 +1769,9 @@ class ParametricRegressionFitter(RegressionFitter):
         self._central_values = self._compute_central_values_of_raw_training_data(df, self.strata)
 
         regressors = utils.coalesce(regressors, self.regressors, {p: None for p in self._fitted_parameter_names})
-        self.regressors = utils.CovariateParameterMappings(regressors, df, force_intercept=self.fit_intercept)
+        self.regressors = utils.CovariateParameterMappings(
+            regressors, df, force_intercept=self.fit_intercept, force_no_intercept=self.force_no_intercept
+        )
         Xs = self.regressors.transform_df(df)
 
         self._check_values_pre_fitting(Xs, utils.coalesce(Ts[1], Ts[0]), E, weights, entries)
@@ -1900,13 +1928,13 @@ class ParametricRegressionFitter(RegressionFitter):
 
                 0. Are there any lifelines warnings outputted during the `fit`?
                 1. Inspect your DataFrame: does everything look as expected?
-                2. Try scaling your duration vector down, i.e. `df["{duration_col}"] = df["{duration_col}"]/100`
+                2. Try scaling your duration vector down, i.e. `df[duration_col] = df[duration_col]/100`
                 3. Is there high-collinearity in the dataset? Try using the variance inflation factor (VIF) to find redundant variables.
                 4. Try using an alternate minimizer: ``fitter._scipy_fit_method = "SLSQP"``.
                 5. Trying adding a small penalizer (or changing it, if already present). Example: `{fitter_name}(penalizer=0.01).fit(...)`.
                 6. Are there any extreme outliers? Try modeling them or dropping them to see if it helps convergence.
             """.format(
-                        duration_col=self.duration_col, fitter_name=self._class_name
+                        fitter_name=self._class_name
                     )
                 )
             )
@@ -1994,10 +2022,11 @@ class ParametricRegressionFitter(RegressionFitter):
                 Some ways to possible ways fix this:
 
                 0. Are there any lifelines warnings outputted during the `fit`?
-                1. Inspect your DataFrame: does everything look as expected? Do you need to add/drop a constant (intercept) column?
-                2. Is there high-collinearity in the dataset? Try using the variance inflation factor (VIF) to find redundant variables.
-                3. Trying adding a small penalizer (or changing it, if already present). Example: `%s(penalizer=0.01).fit(...)`.
-                4. Are there any extreme outliers? Try modeling them or dropping them to see if it helps convergence.
+                1. Does a particularly large variable need to be centered to 0?
+                2. Inspect your DataFrame: does everything look as expected? Do you need to add/drop a constant (intercept) column?
+                3. Is there high-collinearity in the dataset? Try using the variance inflation factor (VIF) to find redundant variables.
+                4. Trying adding a small penalizer (or changing it, if already present). Example: `%s(penalizer=0.01).fit(...)`.
+                5. Are there any extreme outliers? Try modeling them or dropping them to see if it helps convergence.
                 """
                 % self._class_name
             )
@@ -2069,6 +2098,15 @@ class ParametricRegressionFitter(RegressionFitter):
             return self._ll_null_
 
         regressors = {name: "1" for name in self._fitted_parameter_names}
+
+        # we can reuse the final values from the full fit for this partial fit.
+        initial_point = {}
+        for name in self._fitted_parameter_names:
+            try:
+                initial_point[name] = self.params_[name]["Intercept"]
+            except:
+                initial_point[name] = 0.0001
+
         df = pd.DataFrame({"entry": self.entry, "w": self.weights})
 
         # some fitters will have custom __init__ fields that need to be provided (Piecewise, Spline...)
@@ -2081,13 +2119,19 @@ class ParametricRegressionFitter(RegressionFitter):
 
             if utils.CensoringType.is_right_censoring(self):
                 df["T"], df["E"] = self.durations, self.event_observed
-                model.fit_right_censoring(df, "T", "E", entry_col="entry", weights_col="w", regressors=regressors)
+                model.fit_right_censoring(
+                    df, "T", "E", entry_col="entry", weights_col="w", regressors=regressors, initial_point=initial_point
+                )
             elif utils.CensoringType.is_interval_censoring(self):
                 df["lb"], df["ub"], df["E"] = self.lower_bound, self.upper_bound, self.event_observed
-                model.fit_interval_censoring(df, "lb", "ub", "E", entry_col="entry", weights_col="w", regressors=regressors)
+                model.fit_interval_censoring(
+                    df, "lb", "ub", "E", entry_col="entry", weights_col="w", regressors=regressors, initial_point=initial_point
+                )
             if utils.CensoringType.is_left_censoring(self):
                 df["T"], df["E"] = self.durations, self.event_observed
-                model.fit_left_censoring(df, "T", "E", entry_col="entry", weights_col="w", regressors=regressors)
+                model.fit_left_censoring(
+                    df, "T", "E", entry_col="entry", weights_col="w", regressors=regressors, initial_point=initial_point
+                )
         self._ll_null_ = model.log_likelihood_
         return self._ll_null_
 
@@ -2589,9 +2633,13 @@ class ParametricRegressionFitter(RegressionFitter):
         """
         # pylint: disable=access-member-before-definition
         if not hasattr(self, "_concordance_index_"):
-            self._concordance_index_ = utils.concordance_index(self.durations, self._predicted_median, self.event_observed)
-            del self._predicted_median
-            return self.concordance_index_
+            try:
+                self._concordance_index_ = utils.concordance_index(self.durations, self._predicted_median, self.event_observed)
+                del self._predicted_median
+                return self.concordance_index_
+            except ZeroDivisionError:
+                # this can happen if there are no observations, see #1172
+                return 0.5
         return self._concordance_index_
 
     @property
@@ -2904,7 +2952,7 @@ class ParametericAFTRegressionFitter(ParametricRegressionFitter):
             raise ValueError("All upper bound measurements must be greater than or equal to lower bound measurements.")
 
         if formula:
-            primary_columns_or_formula = [formula]
+            primary_columns_or_formula = formula
         else:
             primary_columns_or_formula = df.columns.difference(
                 [self.lower_bound_col, self.upper_bound_col, self.event_col, self.entry_col, self.weights_col]
@@ -3288,7 +3336,8 @@ class ParametericAFTRegressionFitter(ParametricRegressionFitter):
         if np.array_equal(np.eye(len(covariates)), values):
             X.index = ["%s=1" % c for c in covariates]
         else:
-            X.index = [", ".join("%s=%g" % (c, v) for (c, v) in zip(covariates, row)) for row in values]
+            X.index = [", ".join("%s=%s" % (c, v) for (c, v) in zip(covariates, row)) for row in values]
+
         for covariate, value in zip(covariates, values.T):
             X[covariate] = value
 

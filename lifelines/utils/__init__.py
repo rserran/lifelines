@@ -18,7 +18,7 @@ from scipy import stats
 import pandas as pd
 
 from lifelines.utils.concordance import concordance_index
-from lifelines.exceptions import ConvergenceWarning, ApproximationWarning, ConvergenceError, FormulaSyntaxError
+from lifelines.exceptions import ConvergenceWarning, ApproximationWarning, ConvergenceError
 
 
 __all__ = [
@@ -276,7 +276,7 @@ def _expected_value_of_survival_up_to_t(model_or_survival_function, t: float = n
             sf = sf.reset_index()
             return (sf["index"].diff().shift(-1) * sf[model._label]).sum()
         else:
-            return quad(model.predict, 0, t)[0]
+            return quad(model.predict, 0, t, epsabs=1.49e-10, epsrel=1e-10)[0]
     else:
         raise ValueError("Can't compute RMST of object %s" % model_or_survival_function)
 
@@ -622,7 +622,9 @@ def survival_events_from_table(survival_table, observed_deaths_col="observed", c
     return np.asarray(T_), np.asarray(E_), np.asarray(W_)
 
 
-def datetimes_to_durations(start_times, end_times, fill_date=datetime.today(), freq="D", dayfirst=False, na_values=None):
+def datetimes_to_durations(
+    start_times, end_times, fill_date=datetime.today(), freq="D", dayfirst=False, na_values=None, format=None
+):
     """
     This is a very flexible function for transforming arrays of start_times and end_times
     to the proper format for lifelines: duration and event observation arrays.
@@ -633,15 +635,17 @@ def datetimes_to_durations(start_times, end_times, fill_date=datetime.today(), f
         iterable representing start times. These can be strings, or datetime objects.
     end_times: an array, Series or DataFrame
         iterable representing end times. These can be strings, or datetimes. These values can be None, or an empty string, which corresponds to censorship.
-    fill_date: datetime, optional (default=datetime.Today())
-        the date to use if end_times is a None or empty string. This corresponds to last date
+    fill_date: a datetime, array, Series or DataFrame, optional (default=datetime.Today())
+        the date to use if end_times is a missing or empty. This corresponds to last date
         of observation. Anything after this date is also censored.
     freq: string, optional (default='D')
         the units of time to use.  See Pandas 'freq'. Default 'D' for days.
     dayfirst: bool, optional (default=False)
-         convert assuming European-style dates, i.e. day/month/year.
+        see Pandas `to_datetime`
     na_values : list, optional
         list of values to recognize as NA/NaN. Ex: ['', 'NaT']
+    format:
+        see Pandas `to_datetime`
 
     Returns
     -------
@@ -664,17 +668,16 @@ def datetimes_to_durations(start_times, end_times, fill_date=datetime.today(), f
         E # array([ True, False,  True])
 
     """
-    fill_date = pd.to_datetime(fill_date)
+    fill_date_ = pd.Series(fill_date).squeeze()
     freq_string = "timedelta64[%s]" % freq
     start_times = pd.Series(start_times).copy()
     end_times = pd.Series(end_times).copy()
 
     C = ~(pd.isnull(end_times).values | end_times.isin(na_values or [""]))
-    end_times[~C] = fill_date
-    start_times_ = pd.to_datetime(start_times, dayfirst=dayfirst)
-    end_times_ = pd.to_datetime(end_times, dayfirst=dayfirst, errors="coerce")
-
-    deaths_after_cutoff = end_times_ > fill_date
+    end_times[~C] = fill_date_
+    start_times_ = pd.to_datetime(start_times, dayfirst=dayfirst, format=format)
+    end_times_ = pd.to_datetime(end_times, dayfirst=dayfirst, errors="coerce", format=format)
+    deaths_after_cutoff = end_times_ > pd.to_datetime(fill_date_)
     C[deaths_after_cutoff] = False
 
     T = (end_times_ - start_times_).values.astype(freq_string).astype(float)
@@ -712,22 +715,18 @@ def k_fold_cross_validation(
       a Pandas DataFrame with necessary columns `duration_col` and (optional) `event_col`, plus
       other covariates. `duration_col` refers to the lifetimes of the subjects. `event_col`
       refers to whether the 'death' events was observed: 1 if observed, 0 else (censored).
-    duration_col: (n,) array
-      the column in DataFrame that contains the subjects lifetimes.
-    event_col: (n,) array
-      the column in DataFrame that contains the subject's death observation. If left
-      as None, assumes all individuals are non-censored.
+    duration_col: string
+        the name of the column in DataFrame that contains the subjects'
+        lifetimes.
+    event_col: string, optional
+        the  name of the column in DataFrame that contains the subjects' death
+        observation. If left as None, assume all individuals are uncensored.
     k: int
       the number of folds to perform. n/k data will be withheld for testing on.
-    evaluation_measure: function
-      a function that accepts either (event_times, predicted_event_times),
-      or (event_times, predicted_event_times, event_observed).
-      Default: statistics.concordance_index: (C-index)
-    predictor: string
-      a string that matches a prediction method on the fitter instances.
-      For example, ``predict_expectation`` or ``predict_percentile``.
-      Default is "predict_expectation"
-      The interface for the method is: ``predict(self, data, **optional_kwargs)``
+    scoring_method: str
+        one of {'log_likelihood', 'concordance_index'}
+        log_likelihood: returns the average unpenalized partial log-likelihood.
+        concordance_index: returns the concordance-index
     fitter_kwargs:
       keyword args to pass into fitter.fit method.
 
@@ -959,6 +958,18 @@ def pass_for_numeric_dtypes_or_raise_array(x):
         raise ValueError("Values must be numeric: no strings, datetimes, objects, etc.")
 
 
+def check_scaling(df):
+    for col in df.columns:
+        if df[col].mean() > 1e4:
+            warning_text = dedent(
+                """Column {0} has a large mean, try centering this to a value closer to 0.
+            """.format(
+                    col
+                )
+            )
+            warnings.warn(warning_text, ConvergenceWarning)
+
+
 def check_dimensions(df):
     n, d = df.shape
     if d >= n:
@@ -1085,7 +1096,7 @@ def check_complete_separation_low_variance(df: pd.DataFrame, events: np.ndarray,
     deaths_only = df.columns[_low_var(df.loc[events])]
     censors_only = df.columns[_low_var(df.loc[~events])]
     total = df.columns[_low_var(df)]
-    problem_columns = censors_only.union(deaths_only).difference(total).tolist()
+    problem_columns = (censors_only | deaths_only).difference(total).tolist()
     if problem_columns:
         warning_text = """Column {cols} have very low variance when conditioned on death event present or not. This may harm convergence. This could be a form of 'complete separation'. For example, try the following code:
 
@@ -1104,9 +1115,12 @@ def pearson_correlation(x: np.ndarray, y: np.ndarray):
 
 
 def check_entry_times(T, entries):
-    count_invalid_rows = (entries > T).sum()
+    count_invalid_rows = (entries >= T).sum()
     if count_invalid_rows:
-        raise ValueError("""There exist %d rows where entry > duration.""" % count_invalid_rows)
+        raise ValueError(
+            """There exist %d row(s) where entry >= duration. Recommendation is to add a very small value to duration for these rows."""
+            % count_invalid_rows
+        )
 
 
 def check_complete_separation_close_to_perfect_correlation(df: pd.DataFrame, durations: pd.Series):
@@ -1506,7 +1520,7 @@ class StepSizer:
     """
 
     def __init__(self, initial_step_size: Optional[float]) -> None:
-        initial_step_size = initial_step_size or 0.95
+        initial_step_size = initial_step_size or 0.90
 
         self.initial_step_size = initial_step_size
         self.step_size = initial_step_size
@@ -1514,7 +1528,7 @@ class StepSizer:
         self.norm_of_deltas: List[float] = []
 
     def update(self, norm_of_delta: float) -> "StepSizer":
-        SCALE = 1.2
+        SCALE = 1.3
         LOOKBACK = 3
 
         self.norm_of_deltas.append(norm_of_delta)
@@ -1525,10 +1539,10 @@ class StepSizer:
 
         # Only allow small steps
         if norm_of_delta >= 15.0:
-            self.step_size *= 0.25
+            self.step_size *= 0.1
             self.temper_back_up = True
         elif 15.0 > norm_of_delta > 5.0:
-            self.step_size *= 0.75
+            self.step_size *= 0.25
             self.temper_back_up = True
 
         # recent non-monotonically decreasing is a concern
@@ -1719,6 +1733,11 @@ def find_best_parametric_model(
     weights: an array, or pd.Series, of length n
         integer weights per observation
 
+
+    Note
+    ----------
+    Due to instability, the GeneralizedGammaFitter is not tested here.
+
     Returns
     ----------
     tuple of fitted best_model and best_score
@@ -1780,7 +1799,6 @@ def find_best_parametric_model(
         PiecewiseExponentialFitter(knots1[1:-1], label="PiecewiseExponentialFitter: 1 breakpoint"),
         PiecewiseExponentialFitter(knots2[1:-1], label="PiecewiseExponentialFitter: 2 breakpoint"),
         PiecewiseExponentialFitter(knots3[1:-1], label="PiecewiseExponentialFitter: 3 breakpoint"),
-        GeneralizedGammaFitter(),
         SplineFitter(knots1, label="SplineFitter: 1 internal knot"),
         SplineFitter(knots2, label="SplineFitter: 2 internal knot"),
         SplineFitter(knots3, label="SplineFitter: 3 internal knot"),
@@ -1889,7 +1907,9 @@ class CovariateParameterMappings:
             else:
                 raise ValueError("Unexpected transform.")
 
-            if self.force_no_intercept:
+            # some parameters are constants (like in piecewise and splines) and so should
+            # not be dropped.
+            if self.force_no_intercept and X.shape[1] > 1:
                 try:
                     X = X.drop(self.INTERCEPT_COL, axis=1)
                 except:
@@ -1904,6 +1924,7 @@ class CovariateParameterMappings:
 
         # we can't concat empty dataframes and return a column MultiIndex,
         # so we create a "fake" dataframe (acts like a dataframe) to return.
+        # This should be removed because it's gross.
         if Xs_df.size == 0:
             return {p: pd.DataFrame(index=df.index) for p in self.mappings.keys()}
         else:
@@ -1925,28 +1946,6 @@ class CovariateParameterMappings:
         if self.force_intercept:
             formula += "+ 1"
 
-        try:
-            _X = patsy.dmatrix(formula, df, 1, NA_action="raise")
+        _X = patsy.dmatrix(formula, df, 1, NA_action="raise")
 
-        except SyntaxError as e:
-            import traceback
-
-            column_error = "\n".join(traceback.format_exc().split("\n")[-4:])
-            raise FormulaSyntaxError(
-                (
-                    """
-It looks like the DataFrame has non-standard column names. See below for which column:
-
-%s
-
-All columns should either
-
-i) have no non-traditional characters (this includes spaces and periods)
-ii) use `formula=` kwarg in the call to `fit`, and use `Q()` to wrap the column name.
-
-See more docs here: https://lifelines.readthedocs.io/en/latest/Examples.html#fixing-a-formulasyntaxerror
-            """
-                    % column_error
-                )
-            )
         return _X.design_info
