@@ -56,7 +56,7 @@ class CoxPHFitter(RegressionFitter, ProportionalHazardMixin):
         Attach a penalty to the size of the coefficients during regression. This improves
         stability of the estimates and controls for high correlation between covariates.
         For example, this shrinks the magnitude value of :math:`\beta_i`. See ``l1_ratio`` below.
-        The penalty term is :math:`\frac{1}{2} \text{penalizer} \left( (1-\text{l1_ratio}) ||\beta||_2^2 + \text{l1_ratio}||\beta||_1\right)`.
+        The penalty term is :math:`\text{penalizer} \left( \frac{1-\text{l1_ratio}}{2} ||\beta||_2^2 + \text{l1_ratio}||\beta||_1\right)`.
 
         Alternatively, penalizer is an array equal in size to the number of parameters, with penalty coefficients for specific variables. For
         example, `penalizer=0.01 * np.ones(p)` is the same as `penalizer=0.01`
@@ -933,7 +933,7 @@ class CoxPHFitter(RegressionFitter, ProportionalHazardMixin):
         if self.strata is None:
             axes = kwargs.pop("ax", None) or plt.figure().add_subplot(111)
             x_bar = self._central_values
-            X = pd.concat([x_bar] * values.shape[0]).infer_objects()
+            X = pd.concat([x_bar] * values.shape[0])
 
             if np.array_equal(np.eye(n_covariates), values) or np.array_equal(
                 np.append(np.eye(n_covariates), np.zeros((n_covariates, 1)), axis=1), values
@@ -943,7 +943,13 @@ class CoxPHFitter(RegressionFitter, ProportionalHazardMixin):
                 X.index = [", ".join("%s=%s" % (c, v) for (c, v) in zip(covariates, row)) for row in values]
             for covariate, value in zip(covariates, values.T):
                 X[covariate] = value
+
+            # if a column is typeA in the dataset, but the user gives us typeB, we want to cast it. This is
+            # most relevant for categoricals.
+            X = X.astype(self._central_values.dtypes)
+
             getattr(self, "predict_%s" % y)(X).plot(ax=axes, **kwargs)
+
             if plot_baseline:
                 getattr(self, "predict_%s" % y)(x_bar).plot(ax=axes, ls=":", color="k", drawstyle=drawstyle)
 
@@ -958,7 +964,7 @@ class CoxPHFitter(RegressionFitter, ProportionalHazardMixin):
                 for name, value in zip(utils._to_list(self.strata), utils._to_tuple(stratum)):
                     x_bar[name] = value
 
-                X = pd.concat([x_bar] * values.shape[0]).infer_objects()
+                X = pd.concat([x_bar] * values.shape[0])
 
                 if np.array_equal(np.eye(len(covariates)), values):
                     X.index = ["%s=1" % c for c in covariates]
@@ -967,6 +973,10 @@ class CoxPHFitter(RegressionFitter, ProportionalHazardMixin):
 
                 for covariate, value in zip(covariates, values.T):
                     X[covariate] = value
+
+                # if a column is typeA in the dataset, but the user gives us typeB, we want to cast it. This is
+                # most relevant for categoricals.
+                X = X.astype(self._central_values.dtypes)
 
                 getattr(self, "predict_%s" % y)(X).plot(ax=ax, **kwargs)
                 if plot_baseline:
@@ -998,7 +1008,7 @@ class SemiParametricPHFitter(ProportionalHazardMixin, SemiParametricRegressionFi
         Attach a penalty to the size of the coefficients during regression. This improves
         stability of the estimates and controls for high correlation between covariates.
         For example, this shrinks the magnitude value of :math:`\beta_i`. See ``l1_ratio`` below.
-        The penalty term is :math:`\frac{1}{2} \text{penalizer} \left( (1-\text{l1_ratio}) ||\beta||_2^2 + \text{l1_ratio}||\beta||_1\right)`.
+        The penalty term is :math:`\text{penalizer} \left( \frac{1-\text{l1_ratio}}{2} ||\beta||_2^2 + \text{l1_ratio}||\beta||_1\right)`.
 
         Alternatively, penalizer is an array equal in size to the number of parameters, with penalty coefficients for specific variables. For
         example, `penalizer=0.01 * np.ones(p)` is the same as `penalizer=0.01`
@@ -1437,10 +1447,10 @@ estimate the variances. See paper "Variance estimation when using inverse probab
         soft_abs = lambda x, a: 1 / a * (anp.logaddexp(0, -a * x) + anp.logaddexp(0, a * x))
         elastic_net_penalty = (
             lambda beta, a: n
-            * 0.5
+            * self.penalizer
             * (
-                self.l1_ratio * (self.penalizer * soft_abs(beta, a)).sum()
-                + (1 - self.l1_ratio) * (self.penalizer * beta ** 2).sum()
+                self.l1_ratio * (soft_abs(beta, a)).sum()
+                + 0.5 * (1 - self.l1_ratio) * (beta ** 2).sum()
             )
         )
         d_elastic_net_penalty = elementwise_grad(elastic_net_penalty)
