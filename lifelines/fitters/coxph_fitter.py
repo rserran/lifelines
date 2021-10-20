@@ -2685,6 +2685,7 @@ See https://stats.stackexchange.com/q/11109/11867 for more.\n",
 
         if scoring_method == "log_likelihood":
 
+            df = self.regressors.transform_df(df)["beta_"]
             df = utils.normalize(df, self._norm_mean.values, 1.0)
 
             get_gradients = self._choose_gradient_calculator(T, df, entries)
@@ -2786,7 +2787,7 @@ class ParametricCoxModelFitter(ParametricRegressionFitter, ProportionalHazardMix
             v.columns = ["baseline hazard"]
         return v
 
-    def baseline_survival_at_times(self, times=None):
+    def baseline_survival_at_times(self, times: Iterable = None):
         """
         Predict the baseline survival at times (Defaults to observed durations)
         """
@@ -2799,7 +2800,7 @@ class ParametricCoxModelFitter(ParametricRegressionFitter, ProportionalHazardMix
             v.columns = ["baseline survival"]
         return v
 
-    def baseline_cumulative_hazard_at_times(self, times=None):
+    def baseline_cumulative_hazard_at_times(self, times: Iterable = None):
         """
         Predict the baseline cumulative hazard at times (Defaults to observed durations)
         """
@@ -2812,7 +2813,7 @@ class ParametricCoxModelFitter(ParametricRegressionFitter, ProportionalHazardMix
             v.columns = ["baseline cumulative hazard"]
         return v
 
-    def predict_cumulative_hazard(self, df, *, times=None, conditional_after=None):
+    def predict_cumulative_hazard(self, df, *, times: Iterable = None, conditional_after: Iterable = None):
         """
         Predict the cumulative hazard for individuals, given their covariates.
 
