@@ -9,7 +9,7 @@ import time
 from numpy import dot, einsum, log, exp, zeros, arange, multiply, ndarray
 import numpy as np
 from scipy.linalg import solve as spsolve, LinAlgError, norm, inv
-from scipy.integrate import trapz
+from scipy.integrate import trapezoid
 from scipy import stats
 from pandas import DataFrame, Series, Index
 import pandas as pd
@@ -2514,7 +2514,7 @@ See https://stats.stackexchange.com/q/11109/11867 for more.\n",
         """
         subjects = utils._get_index(X)
         v = self.predict_survival_function(X, conditional_after=conditional_after)[subjects]
-        return pd.Series(trapz(v.values.T, v.index), index=subjects)
+        return pd.Series(trapezoid(v.values.T, v.index), index=subjects)
 
     def _compute_baseline_hazard(self, partial_hazards: DataFrame, name: Any) -> pd.DataFrame:
         # https://stats.stackexchange.com/questions/46532/cox-baseline-hazard
@@ -3223,7 +3223,7 @@ class ParametricPiecewiseBaselinePHFitter(ParametricCoxModelFitter, Proportional
 
             for stratum, stratified_X in df.groupby(self.strata):
                 log_lambdas_ = anp.array(
-                    [0] + [self.params_[self._strata_labeler(stratum, i)][0] for i in range(2, self.n_breakpoints + 2)]
+                    [0] + [self.params_.loc[self._strata_labeler(stratum, i)].iloc[0] for i in range(2, self.n_breakpoints + 2)]
                 )
                 lambdas_ = np.exp(log_lambdas_)
 
@@ -3237,7 +3237,9 @@ class ParametricPiecewiseBaselinePHFitter(ParametricCoxModelFitter, Proportional
             return cumulative_hazard
 
         else:
-            log_lambdas_ = np.array([0] + [self.params_[param][0] for param in self._fitted_parameter_names if param != "beta_"])
+            log_lambdas_ = np.array(
+                [0] + [self.params_.loc[param].iloc[0] for param in self._fitted_parameter_names if param != "beta_"]
+            )
             lambdas_ = np.exp(log_lambdas_)
 
             Xs = self.regressors.transform_df(df)
