@@ -1,5 +1,10 @@
 ## Changelog
 
+#### 0.30.2 - 2026-03-04
+ - Revoke the 0.30.1 release and republish as 0.30.2.
+ - Require Python >= 3.10 in package metadata.
+ - Update Python trove classifiers to `Python :: 3 :: Only` and add explicit support classifiers for Python 3.12, 3.13, and 3.14.
+
 #### 0.30.1 - 2026-02-04
  - Optimize `AalenJohansenFitter` variance calculation using prefix-sum accumulators; add `LinearAccumulator`/`QuadraticAccumulator` utilities and tests.
  - Fix `CoxPHFitter` handling when `event_col=None` (sorting and default event vector).
