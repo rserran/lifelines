@@ -1,5 +1,9 @@
 ## Changelog
 
+#### 0.30.3 - 2026-03-05
+ - Revoke the 0.30.2 release and republish as 0.30.3.
+ - Require Python >= 3.11 in package metadata.
+
 #### 0.30.2 - 2026-03-04
  - Revoke the 0.30.1 release and republish as 0.30.2.
  - Require Python >= 3.10 in package metadata.
