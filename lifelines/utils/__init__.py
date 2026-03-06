@@ -1323,7 +1323,14 @@ def to_long_format(df, duration_col) -> pd.DataFrame:
     to_episodic_format
     add_covariate_to_timeline
     """
-    return df.assign(start=0, stop=lambda s: s[duration_col]).drop(duration_col, axis=1)
+    # Create a single copy to avoid modifying the original dataframe
+    long_form_df = df.copy()
+    
+    # pop() removes the column in-place and returns it, avoiding the need for .drop()
+    long_form_df['stop'] = long_form_df.pop(duration_col)
+    long_form_df['start'] = 0
+    
+    return long_form_df
 
 
 def add_covariate_to_timeline(
